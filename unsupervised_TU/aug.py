@@ -70,7 +70,7 @@ class TUDataset_aug(InMemoryDataset):
         self.cleaned = cleaned
         super(TUDataset_aug, self).__init__(root, transform, pre_transform,
                                         pre_filter)
-        self.data, self.slices = torch.load(self.processed_paths[0])
+        self.data, self.slices, _ = torch.load(self.processed_paths[0])
         if self.data.x is not None and not use_node_attr:
             num_node_attributes = self.num_node_attributes
             self.data.x = self.data.x[:, num_node_attributes:]
@@ -162,7 +162,7 @@ class TUDataset_aug(InMemoryDataset):
         os.rename(osp.join(folder, self.name), self.raw_dir)
 
     def process(self):
-        self.data, self.slices = read_tu_data(self.raw_dir, self.name)
+        self.data, self.slices, sizes = read_tu_data(self.raw_dir, self.name)
 
         if self.pre_filter is not None:
             data_list = [self.get(idx) for idx in range(len(self))]
@@ -174,7 +174,7 @@ class TUDataset_aug(InMemoryDataset):
             data_list = [self.pre_transform(data) for data in data_list]
             self.data, self.slices = self.collate(data_list)
 
-        torch.save((self.data, self.slices), self.processed_paths[0])
+        torch.save((self.data, self.slices, sizes), self.processed_paths[0])
 
     def __repr__(self):
         return '{}({})'.format(self.name, len(self))
@@ -185,7 +185,7 @@ class TUDataset_aug(InMemoryDataset):
         if hasattr(self.data, '__num_nodes__'):
             data.num_nodes = self.data.__num_nodes__[0]
 
-        for key in self.data.keys:
+        for key in self.data.keys():
             item, slices = self.data[key], self.slices[key]
             if torch.is_tensor(item):
                 s = list(repeat(slice(None), item.dim()))
@@ -206,7 +206,7 @@ class TUDataset_aug(InMemoryDataset):
         if hasattr(self.data, '__num_nodes__'):
             data.num_nodes = self.data.__num_nodes__[idx]
 
-        for key in self.data.keys:
+        for key in self.data.keys():
             item, slices = self.data[key], self.slices[key]
             if torch.is_tensor(item):
                 s = list(repeat(slice(None), item.dim()))
