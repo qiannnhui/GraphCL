@@ -19,6 +19,7 @@ def arg_parse():
 
     parser.add_argument('--aug', type=str, default='dnodes')
     parser.add_argument('--seed', type=int, default=0)
+    parser.add_argument('--or_loss', action='store_true', help='Set or_loss to True if this flag is present')
 
     return parser.parse_args()
 
