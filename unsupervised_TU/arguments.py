@@ -21,6 +21,8 @@ def arg_parse():
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--data_path',type=str, default='/disk_195a/qiannnhui/data')  
     parser.add_argument('--odecay',type=float, default=1.0)  
+    parser.add_argument('--or_loss', action='store_true', help='Set or_loss to True if this flag is present')
+
 
     return parser.parse_args()
 
