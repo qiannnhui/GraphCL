@@ -248,7 +248,8 @@ if __name__ == '__main__':
             loss = model.loss_cal(x, x_aug)
             print(loss)
             loss_all += loss.item() * data.num_graphs
-            loss += oloss
+            if args.or_loss:
+                loss += oloss
             loss.backward()
             optimizer.step()
             # print('batch')
