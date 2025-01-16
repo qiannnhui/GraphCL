@@ -28,8 +28,8 @@ from model import *
 
 from arguments import arg_parse
 from torch_geometric.transforms import Constant
-import pdb
-
+from check_dim_collapse import check_dimensional_collapse
+from ortho_loss import l2_reg_ortho
 
 class GcnInfomax(nn.Module):
   def __init__(self, hidden_dim, num_gc_layers, alpha=0.5, beta=1., gamma=.1):
@@ -166,10 +166,11 @@ if __name__ == '__main__':
     loss_list = []
     loss_min = float('inf')
     stage_finish_epochs = []
+    odecay = args.odecay
     lr = args.lr
     DS = args.DS
     # path = osp.join(osp.dirname(osp.realpath(__file__)), '.', 'data', DS)
-    path = osp.join(args.path, DS)
+    path = osp.join(args.data_path, DS)
     # kf = StratifiedKFold(n_splits=10, shuffle=True, random_state=None)
 
     dataset = TUDataset(path, name=DS, aug=args.aug, aug_ratio=aug_ratio).shuffle()
@@ -251,8 +252,14 @@ if __name__ == '__main__':
             '''
 
             x_aug = model(data_aug.x, data_aug.edge_index, data_aug.batch, data_aug.num_graphs)
+
+            # print(x)
+            # print(x_aug)
+            oloss = odecay * l2_reg_ortho(model)
             loss = model.loss_cal(x, x_aug)
             loss_all += loss.item() * data.num_graphs
+            if args.or_loss:
+                loss += oloss
             loss.backward()
             optimizer.step()
         print('Epoch {}, Loss {}'.format(epoch, loss_all / len(dataloader.dataset)))
@@ -262,6 +269,8 @@ if __name__ == '__main__':
         #     model.eval()
         #     emb, y = model.encoder.get_embeddings(dataloader_eval)
         #     acc_val, acc = evaluate_embedding(emb, y)
+            # check_dimensional_collapse(emb)
+
         #     accuracies['val'].append(acc_val)
         #     accuracies['test'].append(acc)
 
@@ -282,6 +291,7 @@ if __name__ == '__main__':
     model.eval()
     emb, y = model.encoder.get_embeddings(dataloader_eval)
     acc_val, acc = evaluate_embedding(emb, y)
+    check_dimensional_collapse(emb)
     accuracies['val'].append(acc_val)
     accuracies['test'].append(acc)
 
