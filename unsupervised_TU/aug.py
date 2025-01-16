@@ -65,12 +65,12 @@ class TUDataset_aug(InMemoryDataset):
 
     def __init__(self, root, name, transform=None, pre_transform=None,
                  pre_filter=None, use_node_attr=False, use_edge_attr=False,
-                 cleaned=False, aug=None):
+                 cleaned=False, aug=None, aug_ratio=0.1):
         self.name = name
         self.cleaned = cleaned
         super(TUDataset_aug, self).__init__(root, transform, pre_transform,
                                         pre_filter)
-        self.data, self.slices = torch.load(self.processed_paths[0])
+        self.data, self.slices, _ = torch.load(self.processed_paths[0])
         if self.data.x is not None and not use_node_attr:
             num_node_attributes = self.num_node_attributes
             self.data.x = self.data.x[:, num_node_attributes:]
@@ -101,6 +101,9 @@ class TUDataset_aug(InMemoryDataset):
             '''
 
         self.aug = aug
+        if aug_ratio >= 1:
+            RaiseValueError('aug_ratio should be less than 1')
+        self.aug_ratio = aug_ratio
 
     @property
     def raw_dir(self):
@@ -185,7 +188,7 @@ class TUDataset_aug(InMemoryDataset):
         if hasattr(self.data, '__num_nodes__'):
             data.num_nodes = self.data.__num_nodes__[0]
 
-        for key in self.data.keys:
+        for key in self.data.keys():
             item, slices = self.data[key], self.slices[key]
             if torch.is_tensor(item):
                 s = list(repeat(slice(None), item.dim()))
@@ -206,7 +209,7 @@ class TUDataset_aug(InMemoryDataset):
         if hasattr(self.data, '__num_nodes__'):
             data.num_nodes = self.data.__num_nodes__[idx]
 
-        for key in self.data.keys:
+        for key in self.data.keys():
             item, slices = self.data[key], self.slices[key]
             if torch.is_tensor(item):
                 s = list(repeat(slice(None), item.dim()))
@@ -229,13 +232,13 @@ class TUDataset_aug(InMemoryDataset):
         data.edge_index = torch.cat((data.edge_index, sl), dim=1)
 
         if self.aug == 'dnodes':
-            data_aug = drop_nodes(deepcopy(data))
+            data_aug = drop_nodes(deepcopy(data), self.aug_ratio)
         elif self.aug == 'pedges':
-            data_aug = permute_edges(deepcopy(data))
+            data_aug = permute_edges(deepcopy(data), self.aug_ratio)
         elif self.aug == 'subgraph':
-            data_aug = subgraph(deepcopy(data))
+            data_aug = subgraph(deepcopy(data), self.aug_ratio)
         elif self.aug == 'mask_nodes':
-            data_aug = mask_nodes(deepcopy(data))
+            data_aug = mask_nodes(deepcopy(data), self.aug_ratio)
         elif self.aug == 'none':
             """
             if data.edge_index.max() > data.x.size()[0]:
@@ -249,9 +252,9 @@ class TUDataset_aug(InMemoryDataset):
         elif self.aug == 'random2':
             n = np.random.randint(2)
             if n == 0:
-               data_aug = drop_nodes(deepcopy(data))
+               data_aug = drop_nodes(deepcopy(data), self.aug_ratio)
             elif n == 1:
-               data_aug = subgraph(deepcopy(data))
+               data_aug = subgraph(deepcopy(data), self.aug_ratio)
             else:
                 print('sample error')
                 assert False
@@ -260,11 +263,11 @@ class TUDataset_aug(InMemoryDataset):
         elif self.aug == 'random3':
             n = np.random.randint(3)
             if n == 0:
-               data_aug = drop_nodes(deepcopy(data))
+               data_aug = drop_nodes(deepcopy(data), self.aug_ratio)
             elif n == 1:
-               data_aug = permute_edges(deepcopy(data))
+               data_aug = permute_edges(deepcopy(data), self.aug_ratio)
             elif n == 2:
-               data_aug = subgraph(deepcopy(data))
+               data_aug = subgraph(deepcopy(data), self.aug_ratio)
             else:
                 print('sample error')
                 assert False
@@ -273,13 +276,13 @@ class TUDataset_aug(InMemoryDataset):
         elif self.aug == 'random4':
             n = np.random.randint(4)
             if n == 0:
-               data_aug = drop_nodes(deepcopy(data))
+               data_aug = drop_nodes(deepcopy(data), self.aug_ratio)
             elif n == 1:
-               data_aug = permute_edges(deepcopy(data))
+               data_aug = permute_edges(deepcopy(data), self.aug_ratio)
             elif n == 2:
-               data_aug = subgraph(deepcopy(data))
+               data_aug = subgraph(deepcopy(data), self.aug_ratio)
             elif n == 3:
-               data_aug = mask_nodes(deepcopy(data))
+               data_aug = mask_nodes(deepcopy(data), self.aug_ratio)
             else:
                 print('sample error')
                 assert False
@@ -299,11 +302,11 @@ class TUDataset_aug(InMemoryDataset):
         return data, data_aug
 
 
-def drop_nodes(data):
+def drop_nodes(data, aug_ratio=0.1):
 
     node_num, _ = data.x.size()
     _, edge_num = data.edge_index.size()
-    drop_num = int(node_num / 10)
+    drop_num = int(node_num * aug_ratio)
 
     idx_drop = np.random.choice(node_num, drop_num, replace=False)
     idx_nondrop = [n for n in range(node_num) if not n in idx_drop]
@@ -327,11 +330,11 @@ def drop_nodes(data):
     return data
 
 
-def permute_edges(data):
+def permute_edges(data, aug_ratio=0.1):
 
     node_num, _ = data.x.size()
     _, edge_num = data.edge_index.size()
-    permute_num = int(edge_num / 10)
+    permute_num = int(edge_num * aug_ratio)
 
     edge_index = data.edge_index.transpose(0, 1).numpy()
 
@@ -346,11 +349,11 @@ def permute_edges(data):
 
     return data
 
-def subgraph(data):
+def subgraph(data, aug_ratio=0.1):
 
     node_num, _ = data.x.size()
     _, edge_num = data.edge_index.size()
-    sub_num = int(node_num * 0.2)
+    sub_num = int(node_num * aug_ratio * 2)
 
     edge_index = data.edge_index.numpy()
 
@@ -394,10 +397,10 @@ def subgraph(data):
     return data
 
 
-def mask_nodes(data):
+def mask_nodes(data, aug_ratio=0.1):
 
     node_num, feat_dim = data.x.size()
-    mask_num = int(node_num / 10)
+    mask_num = int(node_num * aug_ratio)
 
     idx_mask = np.random.choice(node_num, mask_num, replace=False)
     data.x[idx_mask] = torch.tensor(np.random.normal(loc=0.5, scale=0.5, size=(mask_num, feat_dim)), dtype=torch.float32)

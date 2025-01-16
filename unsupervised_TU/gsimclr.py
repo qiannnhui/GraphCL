@@ -1,3 +1,9 @@
+def warn(*args, **kwargs):
+    pass
+import warnings
+warnings.warn = warn
+
+import os
 import os.path as osp
 import torch
 from torch.autograd import Variable
@@ -151,16 +157,22 @@ if __name__ == '__main__':
     setup_seed(args.seed)
 
     accuracies = {'val':[], 'test':[]}
-    epochs = 20
-    log_interval = 10
-    batch_size = 128
-    # batch_size = 512
+    epochs = args.epochs
+    log_interval = args.log_interval
+    batch_size = args.batch_size
+    patience = 2
+    min_delta = 0.01
+    aug_ratio = round(args.aug_ratio * 0.1, 1)
+    loss_list = []
+    loss_min = float('inf')
+    stage_finish_epochs = []
     lr = args.lr
     DS = args.DS
-    path = osp.join(osp.dirname(osp.realpath(__file__)), '.', 'data', DS)
+    # path = osp.join(osp.dirname(osp.realpath(__file__)), '.', 'data', DS)
+    path = osp.join(args.path, DS)
     # kf = StratifiedKFold(n_splits=10, shuffle=True, random_state=None)
 
-    dataset = TUDataset(path, name=DS, aug=args.aug).shuffle()
+    dataset = TUDataset(path, name=DS, aug=args.aug, aug_ratio=aug_ratio).shuffle()
     dataset_eval = TUDataset(path, name=DS, aug='none').shuffle()
     print(len(dataset))
     print(dataset.get_num_feature())
@@ -239,27 +251,52 @@ if __name__ == '__main__':
             '''
 
             x_aug = model(data_aug.x, data_aug.edge_index, data_aug.batch, data_aug.num_graphs)
-
-            # print(x)
-            # print(x_aug)
             loss = model.loss_cal(x, x_aug)
-            print(loss)
             loss_all += loss.item() * data.num_graphs
             loss.backward()
             optimizer.step()
-            # print('batch')
-        print('Epoch {}, Loss {}'.format(epoch, loss_all / len(dataloader)))
+        print('Epoch {}, Loss {}'.format(epoch, loss_all / len(dataloader.dataset)))
+        loss_list.append(loss_all / len(dataloader.dataset))
 
-        if epoch % log_interval == 0:
-            model.eval()
-            emb, y = model.encoder.get_embeddings(dataloader_eval)
-            acc_val, acc = evaluate_embedding(emb, y)
-            accuracies['val'].append(acc_val)
-            accuracies['test'].append(acc)
-            # print(accuracies['val'][-1], accuracies['test'][-1])
+        # if epoch % log_interval == 0:
+        #     model.eval()
+        #     emb, y = model.encoder.get_embeddings(dataloader_eval)
+        #     acc_val, acc = evaluate_embedding(emb, y)
+        #     accuracies['val'].append(acc_val)
+        #     accuracies['test'].append(acc)
+
+        # Early stopping
+        if (loss_list[-1] < loss_min):
+            loss_min = loss_list[-1]
+            counter = 0
+        elif loss_list[-1] > (loss_min + min_delta*loss_min):
+            counter += 1
+            if counter >= patience:
+                loss_min = float('inf')
+                counter = 0
+                print(f'First stage finished at epoch {epoch}')
+                stage_finish_epochs.append(epoch)
+                break
+
+
+    model.eval()
+    emb, y = model.encoder.get_embeddings(dataloader_eval)
+    acc_val, acc = evaluate_embedding(emb, y)
+    accuracies['val'].append(acc_val)
+    accuracies['test'].append(acc)
+
 
     tpe  = ('local' if args.local else '') + ('prior' if args.prior else '')
-    with open('logs/log_' + args.DS + '_' + args.aug, 'a+') as f:
-        s = json.dumps(accuracies)
-        f.write('{},{},{},{},{},{},{}\n'.format(args.DS, tpe, args.num_gc_layers, epochs, log_interval, lr, s))
-        f.write('\n')
+    if not os.path.exists("./logs"):
+        os.makedirs("./logs")
+    if not os.path.exists("./logs/GCL"):
+        os.makedirs("./logs/GCL")
+    if not os.path.exists(f"./logs/GCL/{args.DS}"):
+        os.makedirs(f"./logs/GCL/{args.DS}")
+
+    with open((f'./logs/GCL/{args.DS}/{args.DS}_{aug_ratio}_'+str(args.seed)), 'a+') as f:
+        s1 = json.dumps(stage_finish_epochs)
+        s2 = json.dumps(loss_list)
+        s3 = json.dumps(accuracies)
+        f.write('{},{},{},{},{},{},{},{}\n'.format(args.DS, args.num_gc_layers, epochs, log_interval, lr, s1, s2, s3))
+    
