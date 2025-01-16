@@ -25,13 +25,13 @@ def check_dimensional_collapse(embeddings):
     _, singular_values, _ = np.linalg.svd(cov_matrix)
     
     # Step 4: Plot singular value distribution
-    plt.plot(singular_values)
+    plt.plot(singular_values, label=f"0.{args.aug_ratio}")
     plt.yscale('log') 
     plt.title("Singular Value Distribution")
     plt.xlabel("Index")
     plt.ylabel("Singular Value (Log)")
-    plt.savefig(f"singular_value_distribution_{args.DS}.png", dpi=300, bbox_inches="tight")
-    plt.close()
+    plt.savefig(f"singular_value_distribution_{args.DS}_0.{args.aug_ratio}_{args.seed}.png", dpi=300, bbox_inches="tight")
+    # plt.close()
     
     # Step 5: Log singular values for inspection
     # print("Singular Values:", singular_values)

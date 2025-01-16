@@ -291,7 +291,7 @@ if __name__ == '__main__':
     model.eval()
     emb, y = model.encoder.get_embeddings(dataloader_eval)
     acc_val, acc = evaluate_embedding(emb, y)
-    check_dimensional_collapse(emb)
+    singular_val = check_dimensional_collapse(emb)
     accuracies['val'].append(acc_val)
     accuracies['test'].append(acc)
 
@@ -310,3 +310,5 @@ if __name__ == '__main__':
         s3 = json.dumps(accuracies)
         f.write('{},{},{},{},{},{},{},{}\n'.format(args.DS, args.num_gc_layers, epochs, log_interval, lr, s1, s2, s3))
     
+    with open((f'./logs/GCL/{args.DS}/{args.DS}_{aug_ratio}_'+str(args.seed)+'_singular_val'), 'a+') as f:
+        f.write(json.dumps(singular_val.tolist()))
