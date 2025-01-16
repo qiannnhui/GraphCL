@@ -258,12 +258,12 @@ if __name__ == '__main__':
         print('Epoch {}, Loss {}'.format(epoch, loss_all / len(dataloader.dataset)))
         loss_list.append(loss_all / len(dataloader.dataset))
 
-        # if epoch % log_interval == 0:
-        #     model.eval()
-        #     emb, y = model.encoder.get_embeddings(dataloader_eval)
-        #     acc_val, acc = evaluate_embedding(emb, y)
-        #     accuracies['val'].append(acc_val)
-        #     accuracies['test'].append(acc)
+        if epoch % log_interval == 0:
+            model.eval()
+            emb, y = model.encoder.get_embeddings(dataloader_eval)
+            acc_val, acc = evaluate_embedding(emb, y)
+            accuracies['val'].append(acc_val)
+            accuracies['test'].append(acc)
 
         # Early stopping
         if (loss_list[-1] < loss_min):
@@ -279,11 +279,11 @@ if __name__ == '__main__':
                 break
 
 
-    model.eval()
-    emb, y = model.encoder.get_embeddings(dataloader_eval)
-    acc_val, acc = evaluate_embedding(emb, y)
-    accuracies['val'].append(acc_val)
-    accuracies['test'].append(acc)
+    # model.eval()
+    # emb, y = model.encoder.get_embeddings(dataloader_eval)
+    # acc_val, acc = evaluate_embedding(emb, y)
+    # accuracies['val'].append(acc_val)
+    # accuracies['test'].append(acc)
 
 
     tpe  = ('local' if args.local else '') + ('prior' if args.prior else '')
