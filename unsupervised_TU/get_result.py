@@ -4,12 +4,13 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 plot = False
-dataset_name = "PROTEINS"
+dataset_name = "MUTAG"
 # node, edge, attr
 SADA_aug = "attr"
-aug_ratio = 5
+aug_ratio = 1
 file_list = []
 for i in range(5):
+    # file_path = f"./logs/GCL/{dataset_name}/{dataset_name}_0.{aug_ratio}_OR_{i}"
     file_path = f"./logs/GCL/{dataset_name}/{dataset_name}_0.{aug_ratio}_{i}"
     file_list.append(file_path)
 
@@ -66,7 +67,8 @@ if plot:
     plt.ylabel('Accs')
     plt.legend()
 
-    plt.savefig(f"./logs/plots/{dataset_name}/{dataset_name}_Training_Curve_Comparison.png")
+    # plt.savefig(f"./logs/plots/{dataset_name}/{dataset_name}_Training_Curve_Comparison_OR_0.{aug_ratio}.png")
+    plt.savefig(f"./logs/plots/{dataset_name}_old/{dataset_name}_Training_Curve_Comparison_0.{aug_ratio}.png")
 
 print('=====EXP0=====')
 print(f'Accuracy mean={statistics.mean(list1)}, max={max(list1)}, min={min(list1)}')

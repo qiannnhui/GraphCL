@@ -265,35 +265,35 @@ if __name__ == '__main__':
         print('Epoch {}, Loss {}'.format(epoch, loss_all / len(dataloader.dataset)))
         loss_list.append(loss_all / len(dataloader.dataset))
 
-        # if epoch % log_interval == 0:
-        #     model.eval()
-        #     emb, y = model.encoder.get_embeddings(dataloader_eval)
-        #     acc_val, acc = evaluate_embedding(emb, y)
+        if epoch % log_interval == 0:
+            model.eval()
+            emb, y = model.encoder.get_embeddings(dataloader_eval)
+            acc_val, acc = evaluate_embedding(emb, y)
             # check_dimensional_collapse(emb)
 
-        #     accuracies['val'].append(acc_val)
-        #     accuracies['test'].append(acc)
+            accuracies['val'].append(acc_val)
+            accuracies['test'].append(acc)
 
-        # Early stopping
-        if (loss_list[-1] < loss_min):
-            loss_min = loss_list[-1]
-            counter = 0
-        elif loss_list[-1] > (loss_min + min_delta*loss_min):
-            counter += 1
-            if counter >= patience:
-                loss_min = float('inf')
-                counter = 0
-                print(f'First stage finished at epoch {epoch}')
-                stage_finish_epochs.append(epoch)
-                break
+        # # Early stopping
+        # if (loss_list[-1] < loss_min):
+        #     loss_min = loss_list[-1]
+        #     counter = 0
+        # elif loss_list[-1] > (loss_min + min_delta*loss_min):
+        #     counter += 1
+        #     if counter >= patience:
+        #         loss_min = float('inf')
+        #         counter = 0
+        #         print(f'First stage finished at epoch {epoch}')
+        #         stage_finish_epochs.append(epoch)
+        #         break
 
 
-    model.eval()
-    emb, y = model.encoder.get_embeddings(dataloader_eval)
-    acc_val, acc = evaluate_embedding(emb, y)
-    singular_val = check_dimensional_collapse(emb)
-    accuracies['val'].append(acc_val)
-    accuracies['test'].append(acc)
+    # model.eval()
+    # emb, y = model.encoder.get_embeddings(dataloader_eval)
+    # acc_val, acc = evaluate_embedding(emb, y)
+    # singular_val = check_dimensional_collapse(emb)
+    # accuracies['val'].append(acc_val)
+    # accuracies['test'].append(acc)
 
 
     tpe  = ('local' if args.local else '') + ('prior' if args.prior else '')
@@ -310,5 +310,5 @@ if __name__ == '__main__':
         s3 = json.dumps(accuracies)
         f.write('{},{},{},{},{},{},{},{}\n'.format(args.DS, args.num_gc_layers, epochs, log_interval, lr, s1, s2, s3))
     
-    with open((f'./logs/GCL/{args.DS}/{args.DS}_{aug_ratio}_'+str(args.seed)+'_singular_val'), 'a+') as f:
-        f.write(json.dumps(singular_val.tolist()))
+    # with open((f'./logs/GCL/{args.DS}/{args.DS}_{aug_ratio}_'+str(args.seed)+'_singular_val'), 'a+') as f:
+    #     f.write(json.dumps(singular_val.tolist()))
