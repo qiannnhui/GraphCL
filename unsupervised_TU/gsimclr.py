@@ -273,7 +273,7 @@ if __name__ == '__main__':
     setup_seed(args.seed)
 
     # tensorboard
-    writer = SummaryWriter(log_dir=f'logs/cheated/{args.DS}/tensorboard_{args.seed}_{args.mode}_{time.ctime(time.time())}')
+    writer = SummaryWriter(log_dir=f'logs/cheated+OR/{args.DS}/tensorboard_{args.seed}_{args.mode}_{time.ctime(time.time())}')
 
     accuracies = {'val':[], 'test':[]}
     epochs = args.epochs
@@ -404,7 +404,10 @@ if __name__ == '__main__':
             model.eval()
             emb, y = model.encoder.get_embeddings(dataloader_eval)
             acc_val, acc = evaluate_embedding(emb, y)
-            check_dimensional_collapse(emb)
+            singular_values = check_dimensional_collapse(emb)
+            for i, value in enumerate(singular_values):
+                writer.add_scalar(f'Singular_Values/{epoch}_{args.DS}_{args.or_loss}', np.log10(value), i)
+
             accuracies['val'].append(acc_val)
             accuracies['test'].append(acc)
             # tensorboard
