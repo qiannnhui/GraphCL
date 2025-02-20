@@ -28,8 +28,8 @@ from model import *
 
 from arguments import arg_parse
 from torch_geometric.transforms import Constant
-import pdb
-
+from check_dim_collapse import check_dimensional_collapse
+from ortho_loss import l2_reg_ortho
 from torch.utils.tensorboard import SummaryWriter
 import time
 
@@ -285,6 +285,7 @@ if __name__ == '__main__':
     loss_list = []
     loss_min = float('inf')
     stage_finish_epochs = []
+    odecay = args.odecay
     lr = args.lr
     DS = args.DS
     # path = osp.join(osp.dirname(osp.realpath(__file__)), '.', 'data', DS)
@@ -379,9 +380,15 @@ if __name__ == '__main__':
                 loss, pos_sim, neg_sim = model.loss_cal_rm_FN_only(x, x_aug, labels)
             else:
                raise RuntimeError(f"no mode matching {args.mode}, input should be: normal, cheated, rm_FN")
+
+            # print(x)
+            # print(x_aug)
+            oloss = odecay * l2_reg_ortho(model)
             loss_all += loss.item() * data.num_graphs
             pos_sim_all += pos_sim.item()
             neg_sim_all += neg_sim.item()
+            if args.or_loss:
+                loss += oloss
             loss.backward()
             optimizer.step()
         # tensorboard
@@ -397,6 +404,7 @@ if __name__ == '__main__':
             model.eval()
             emb, y = model.encoder.get_embeddings(dataloader_eval)
             acc_val, acc = evaluate_embedding(emb, y)
+            check_dimensional_collapse(emb)
             accuracies['val'].append(acc_val)
             accuracies['test'].append(acc)
             # tensorboard

@@ -31,6 +31,8 @@ def arg_parse():
     parser.add_argument('--aug_ratio', dest='aug_ratio', type=int, default=1,
             help='Dropout rate of data augmentation, will be multiplied by 0.1')
     parser.add_argument('--mode', type=str, default='normal', help='normal, rm_FN(rm False Negative), cheated(pos and neg)')
+    parser.add_argument('--odecay',type=float, default=1.0)  
+
 
     return parser.parse_args()
 

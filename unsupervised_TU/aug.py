@@ -165,7 +165,7 @@ class TUDataset_aug(InMemoryDataset):
         os.rename(osp.join(folder, self.name), self.raw_dir)
 
     def process(self):
-        self.data, self.slices = read_tu_data(self.raw_dir, self.name)
+        self.data, self.slices, sizes = read_tu_data(self.raw_dir, self.name)
 
         if self.pre_filter is not None:
             data_list = [self.get(idx) for idx in range(len(self))]
@@ -177,7 +177,7 @@ class TUDataset_aug(InMemoryDataset):
             data_list = [self.pre_transform(data) for data in data_list]
             self.data, self.slices = self.collate(data_list)
 
-        torch.save((self.data, self.slices), self.processed_paths[0])
+        torch.save((self.data, self.slices, sizes), self.processed_paths[0])
 
     def __repr__(self):
         return '{}({})'.format(self.name, len(self))
