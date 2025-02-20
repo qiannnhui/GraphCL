@@ -251,8 +251,8 @@ class simclr(nn.Module):
 
     loss = pos_sim_sum / neg_sim_sum
     loss = -torch.log(loss + 1e-8).mean()  # 避免 log(0)
-    # pos_sim_ = pos_sim_sum.mean() # not self pos
-    pos_sim_ = self_pos.mean() # self pos
+    pos_sim_ = pos_sim_sum.mean() # not self pos
+    # pos_sim_ = self_pos.mean() # self pos
     neg_sim_ = neg_sim_sum.mean()
 
     return loss, pos_sim_, neg_sim_
@@ -273,7 +273,7 @@ if __name__ == '__main__':
     setup_seed(args.seed)
 
     # tensorboard
-    writer = SummaryWriter(log_dir=f'logs/GCL/{args.DS}/tensorboard_{args.seed}_{args.mode}_{time.ctime(time.time())}')
+    writer = SummaryWriter(log_dir=f'logs/cheated/{args.DS}/tensorboard_{args.seed}_{args.mode}_{time.ctime(time.time())}')
 
     accuracies = {'val':[], 'test':[]}
     epochs = args.epochs
