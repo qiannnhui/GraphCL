@@ -1,11 +1,16 @@
 #!/bin/bash -ex
 AUG=dnodes
-DATASET=PROTEINS
-for aug_ratio in 1 2 3 4 5 6 7 8 9
+for DATASET in MUTAG PROTEINS ENZYMES MSRC_21
 do
-  for seed in 0 1 2 3 4 
+  for mode in normal cheated rm_FN
   do
-    CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DATASET --lr 0.01 --local --num-gc-layers 3 --aug $AUG --seed $seed --aug_ratio $aug_ratio
-
+    for aug_ratio in 2
+    do
+      for seed in 0
+      do
+        # CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DATASET --lr 0.01 --local --num-gc-layers 5 --aug $AUG --seed $seed --aug_ratio $aug_ratio
+        CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS MUTAG --lr 0.01 --local --num-gc-layers 5 --aug $AUG --seed $seed --aug_ratio $aug_ratio --mode $mode
+      done
+    done
   done
 done

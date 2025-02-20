@@ -26,9 +26,11 @@ def arg_parse():
     parser.add_argument('--aug', type=str, default='dnodes')
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--or_loss', action='store_true', help='Set or_loss to True if this flag is present')
-    parser.add_argument('--path', type=str, default='/disk_194b/GCL_datasets/data')
+#     parser.add_argument('--path', type=str, default='/disk_194b/GCL_datasets/data') # 30
+    parser.add_argument('--path', type=str, default='/disk_195a/qiannnhui/data') # 195
     parser.add_argument('--aug_ratio', dest='aug_ratio', type=int, default=1,
             help='Dropout rate of data augmentation, will be multiplied by 0.1')
+    parser.add_argument('--mode', type=str, default='normal', help='normal, rm_FN(rm False Negative), cheated(pos and neg)')
 
     return parser.parse_args()
 
