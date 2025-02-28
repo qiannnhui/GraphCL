@@ -264,27 +264,7 @@ if __name__ == '__main__':
             acc_val, acc = evaluate_embedding(emb, y)
             accuracies['val'].append(acc_val)
             accuracies['test'].append(acc)
-
-        # Early stopping
-        if (loss_list[-1] < loss_min):
-            loss_min = loss_list[-1]
-            counter = 0
-        elif loss_list[-1] > (loss_min + min_delta*loss_min):
-            counter += 1
-            if counter >= patience:
-                loss_min = float('inf')
-                counter = 0
-                print(f'First stage finished at epoch {epoch}')
-                stage_finish_epochs.append(epoch)
-                break
-
-
-    # model.eval()
-    # emb, y = model.encoder.get_embeddings(dataloader_eval)
-    # acc_val, acc = evaluate_embedding(emb, y)
-    # accuracies['val'].append(acc_val)
-    # accuracies['test'].append(acc)
-
+            
 
     tpe  = ('local' if args.local else '') + ('prior' if args.prior else '')
     if not os.path.exists("./logs"):
