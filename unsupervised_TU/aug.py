@@ -102,7 +102,7 @@ class TUDataset_aug(InMemoryDataset):
 
         self.aug = aug
         if aug_ratio >= 1:
-            RaiseValueError('aug_ratio should be less than 1')
+            raise ValueError('aug_ratio should be less than 1')
         self.aug_ratio = aug_ratio
 
     @property
@@ -247,7 +247,7 @@ class TUDataset_aug(InMemoryDataset):
                 assert False
             """
             data_aug = deepcopy(data)
-            data_aug.x = torch.ones((data.edge_index.max()+1, 1))
+            # data_aug.x = torch.ones((data.edge_index.max()+1, 1))
 
         elif self.aug == 'random2':
             n = np.random.randint(2)

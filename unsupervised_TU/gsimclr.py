@@ -193,7 +193,7 @@ class simclr(nn.Module):
 
     neg_sim = (sim_matrix.sum(dim=1) - self_pos)
     loss = self_pos / neg_sim
-    loss = - torch.log(loss).mean()
+    loss = - torch.log(loss + 1e-8).mean()
     pos_sim_ = self_pos.mean()
     neg_sim_ = neg_sim.mean()
 
@@ -244,10 +244,40 @@ class simclr(nn.Module):
 
     # 選擇 positive pairs（不一定是對角線）
     pos_sim = sim_matrix * pos_mask  # 只保留相同類別的相似度值
-    pos_sim_sum = pos_sim.sum(dim=1)
-    # pos_sim_sum = pos_sim.sum(dim=1) - torch.diag(pos_sim)  # 排除自己本身
+    # pos_sim_sum = pos_sim.sum(dim=1)
+    pos_sim_sum = pos_sim.sum(dim=1) - torch.diag(pos_sim)  # 排除自己本身
 
-    neg_sim_sum = sim_matrix.sum(dim=1) - pos_sim_sum  # 所有樣本總和 - 正樣本總和
+    neg_sim_sum = sim_matrix.sum(dim=1) - pos_sim_sum - torch.diag(pos_sim)  # 所有樣本總和 - 正樣本總和
+
+    loss = pos_sim_sum / neg_sim_sum
+    loss = -torch.log(loss + 1e-8).mean()  # 避免 log(0)
+    pos_sim_ = pos_sim_sum.mean() # not self pos
+    # pos_sim_ = self_pos.mean() # self pos
+    neg_sim_ = neg_sim_sum.mean()
+
+    return loss, pos_sim_, neg_sim_
+
+  def loss_cal_rm_FP_only(self, x, x_aug, labels=None):
+
+    T = 0.2
+    batch_size, _ = x.size()
+    x_abs = x.norm(dim=1)
+    x_aug_abs = x_aug.norm(dim=1)
+
+    sim_matrix = torch.einsum('ik,jk->ij', x, x_aug) / torch.einsum('i,j->ij', x_abs, x_aug_abs)
+    sim_matrix = torch.exp(sim_matrix / T)
+    self_pos = sim_matrix[range(batch_size), range(batch_size)]
+
+    # modified:all pos and all neg cal
+    labels = labels.view(-1, 1)  # 轉換為 (batch_size, 1) 方便比較
+    pos_mask = labels.eq(labels.T)  # 創建相同類別的對應矩陣
+
+    # 選擇 positive pairs（不一定是對角線）
+    pos_sim = sim_matrix * pos_mask  # 只保留相同類別的相似度值
+    # pos_sim_sum = pos_sim.sum(dim=1)
+    pos_sim_sum = pos_sim.sum(dim=1) - torch.diag(pos_sim)  # 排除自己本身
+
+    neg_sim_sum = sim_matrix.sum(dim=1) - self_pos  # 所有樣本總和 - 正樣本總和
 
     loss = pos_sim_sum / neg_sim_sum
     loss = -torch.log(loss + 1e-8).mean()  # 避免 log(0)
@@ -273,14 +303,12 @@ if __name__ == '__main__':
     setup_seed(args.seed)
 
     # tensorboard
-    writer = SummaryWriter(log_dir=f'logs/cheated+OR/{args.DS}/tensorboard_{args.seed}_{args.mode}_{time.ctime(time.time())}')
+    writer = SummaryWriter(log_dir=f'logs/cheated_no_aug_500epochs/{args.DS}_{args.lr}/tensorboard_{args.aug}_{args.mode}_{time.ctime(time.time())}_{args.or_loss}')
 
     accuracies = {'val':[], 'test':[]}
     epochs = args.epochs
     log_interval = args.log_interval
     batch_size = args.batch_size
-    patience = 2
-    min_delta = 0.01
     aug_ratio = round(args.aug_ratio * 0.1, 1)
     loss_list = []
     loss_min = float('inf')
@@ -378,6 +406,8 @@ if __name__ == '__main__':
                 loss, pos_sim, neg_sim = model.loss_cal_cheated(x, x_aug, labels)
             elif args.mode == 'rm_FN':
                 loss, pos_sim, neg_sim = model.loss_cal_rm_FN_only(x, x_aug, labels)
+            elif args.mode == 'rm_FP':
+                loss, pos_sim, neg_sim = model.loss_cal_rm_FP_only(x, x_aug, labels)
             else:
                raise RuntimeError(f"no mode matching {args.mode}, input should be: normal, cheated, rm_FN")
 
@@ -406,7 +436,7 @@ if __name__ == '__main__':
             acc_val, acc = evaluate_embedding(emb, y)
             singular_values = check_dimensional_collapse(emb)
             for i, value in enumerate(singular_values):
-                writer.add_scalar(f'Singular_Values/{epoch}_{args.DS}_{args.or_loss}', np.log10(value), i)
+                writer.add_scalar(f'Singular_Values/{epoch}_{args.DS}', np.log10(value), i)
 
             accuracies['val'].append(acc_val)
             accuracies['test'].append(acc)
