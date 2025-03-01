@@ -31,7 +31,8 @@ from torch_geometric.transforms import Constant
 from check_dim_collapse import check_dimensional_collapse
 from ortho_loss import l2_reg_ortho
 from torch.utils.tensorboard import SummaryWriter
-import timefrom sklearn.metrics import confusion_matrix
+import time
+from sklearn.metrics import confusion_matrix
 from plot_similarity import plot_similarity_matrix
 from plot_sim_distribution import plot_similarity_distribution
 
@@ -146,7 +147,7 @@ class simclr(nn.Module):
 
       return cm
 
-  def loss_cal(self, x, x_aug, labels, get_cm=False, epoch=None, labels=None):
+  def loss_cal(self, x, x_aug, labels, get_cm=False, epoch=None):
 
     T = 0.2
     batch_size, _ = x.size()
@@ -196,6 +197,18 @@ class simclr(nn.Module):
     # loss = - torch.log(loss).mean()
     # pos_sim_ = pos_sim.mean()
     # neg_sim_ = neg_sim.mean()
+    # get correct answer
+
+    if get_cm:
+        labels = labels.view(-1, 1)
+        pos_mask = labels.eq(labels.T)
+        normalized_sim_matrix = self.min_max_normalization(sim_matrix=sim_matrix)
+        cm = self.calculate_confusion_matrix(pos_mask=pos_mask, sim_matrix=normalized_sim_matrix)
+        plot_similarity_matrix(sim_matrix=sim_matrix, pos_mask=pos_mask, file_name=f'epoch_{epoch}_not_normalized')
+        plot_similarity_matrix(sim_matrix=normalized_sim_matrix, pos_mask=pos_mask, file_name=f'epoch_{epoch}_normalized')
+        plot_similarity_distribution(sim_matrix=normalized_sim_matrix, pos_mask=pos_mask, file_name=f'sim_distribution_epoch_{epoch}_normalized')
+        plot_similarity_distribution(sim_matrix=sim_matrix, pos_mask=pos_mask, file_name=f'sim_distribution_epoch_{epoch}_not_normalized')
+        print("cm = ", cm)
 
     return loss, pos_sim_, neg_sim_
 
@@ -243,17 +256,6 @@ class simclr(nn.Module):
     loss = -torch.log(loss + 1e-8).mean()  # avoid log(0)
     pos_sim_ = self_pos.mean()
     neg_sim_ = neg_sim_sum.mean()
-    # get correct answer
-    if get_cm:
-        labels = labels.view(-1, 1)
-        pos_mask = labels.eq(labels.T)
-        normalized_sim_matrix = self.min_max_normalization(sim_matrix=sim_matrix)
-        cm = self.calculate_confusion_matrix(pos_mask=pos_mask, sim_matrix=normalized_sim_matrix)
-        plot_similarity_matrix(sim_matrix=sim_matrix, pos_mask=pos_mask, file_name=f'epoch_{epoch}_not_normalized')
-        plot_similarity_matrix(sim_matrix=normalized_sim_matrix, pos_mask=pos_mask, file_name=f'epoch_{epoch}_normalized')
-        plot_similarity_distribution(sim_matrix=normalized_sim_matrix, pos_mask=pos_mask, file_name=f'sim_distribution_epoch_{epoch}_normalized')
-        plot_similarity_distribution(sim_matrix=sim_matrix, pos_mask=pos_mask, file_name=f'sim_distribution_epoch_{epoch}_not_normalized')
-        print("cm = ", cm)
 
     return loss, pos_sim_, neg_sim_
   
@@ -432,7 +434,7 @@ if __name__ == '__main__':
 
             x_aug = model(data_aug.x, data_aug.edge_index, data_aug.batch, data_aug.num_graphs)
             if args.mode == 'normal':
-                loss, pos_sim, neg_sim = model.loss_cal_normal(x, x_aug, labels=labels, get_cm=True if epoch % log_interval == 0 else False, epoch=epoch, labels)
+                loss, pos_sim, neg_sim = model.loss_cal_normal(x, x_aug, labels=labels, get_cm=True if epoch % log_interval == 0 else False, epoch=epoch)
             elif args.mode == 'cheated':
                 loss, pos_sim, neg_sim = model.loss_cal_cheated(x, x_aug, labels)
             elif args.mode == 'rm_FN':
