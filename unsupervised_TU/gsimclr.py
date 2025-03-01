@@ -28,8 +28,10 @@ from model import *
 
 from arguments import arg_parse
 from torch_geometric.transforms import Constant
-import pdb
-from sklearn.metrics import confusion_matrix
+from check_dim_collapse import check_dimensional_collapse
+from ortho_loss import l2_reg_ortho
+from torch.utils.tensorboard import SummaryWriter
+import timefrom sklearn.metrics import confusion_matrix
 from plot_similarity import plot_similarity_matrix
 from plot_sim_distribution import plot_similarity_distribution
 
@@ -144,7 +146,7 @@ class simclr(nn.Module):
 
       return cm
 
-  def loss_cal(self, x, x_aug, labels, get_cm=False, epoch=None):
+  def loss_cal(self, x, x_aug, labels, get_cm=False, epoch=None, labels=None):
 
     T = 0.2
     batch_size, _ = x.size()
@@ -153,9 +155,94 @@ class simclr(nn.Module):
 
     sim_matrix = torch.einsum('ik,jk->ij', x, x_aug) / torch.einsum('i,j->ij', x_abs, x_aug_abs)
     sim_matrix = torch.exp(sim_matrix / T)
-    pos_sim = sim_matrix[range(batch_size), range(batch_size)]
-    loss = pos_sim / (sim_matrix.sum(dim=1) - pos_sim)
-    loss = - torch.log(loss).mean()
+    self_pos = sim_matrix[range(batch_size), range(batch_size)]
+
+    # # modified:all pos and all neg cal
+    # labels = labels.view(-1, 1)  # 轉換為 (batch_size, 1) 方便比較
+    # pos_mask = labels.eq(labels.T)  # 創建相同類別的對應矩陣
+
+    # # 選擇 positive pairs（不一定是對角線）
+    # pos_sim = sim_matrix * pos_mask  # 只保留相同類別的相似度值
+    # pos_sim_sum = pos_sim.sum(dim=1)
+    # # pos_sim_sum = pos_sim.sum(dim=1) - torch.diag(pos_sim)  # 排除自己本身
+
+    # neg_sim_sum = sim_matrix.sum(dim=1) - pos_sim_sum  # 所有樣本總和 - 正樣本總和
+
+    # loss = pos_sim_sum / neg_sim_sum
+    # loss = -torch.log(loss + 1e-8).mean()  # 避免 log(0)
+    # pos_sim_ = pos_sim_sum.mean()
+    # neg_sim_ = neg_sim_sum.mean()
+
+
+    # modified: self -> positive; negative:take away all cheated
+    labels = labels.view(-1, 1)
+    pos_mask = labels.eq(labels.T)
+
+    # cal negative cheated (take away the real positive)
+    pos_sim = sim_matrix * pos_mask
+    pos_sim_sum = pos_sim.sum(dim=1)
+    neg_sim_sum = sim_matrix.sum(dim=1) - pos_sim_sum
+
+    loss = self_pos / neg_sim_sum
+    loss = -torch.log(loss + 1e-8).mean()  # 避免 log(0)
+    pos_sim_ = self_pos.mean()
+    neg_sim_ = neg_sim_sum.mean()
+
+    
+    # original code:
+    # # pos_sim = sim_matrix[range(batch_size), range(batch_size)]
+    # neg_sim = (sim_matrix.sum(dim=1) - pos_sim)
+    # loss = self_pos / neg_sim
+    # loss = - torch.log(loss).mean()
+    # pos_sim_ = pos_sim.mean()
+    # neg_sim_ = neg_sim.mean()
+
+    return loss, pos_sim_, neg_sim_
+
+  def loss_cal_normal(self, x, x_aug, labels=None):
+
+    T = 0.2
+    batch_size, _ = x.size()
+    x_abs = x.norm(dim=1)
+    x_aug_abs = x_aug.norm(dim=1)
+
+    sim_matrix = torch.einsum('ik,jk->ij', x, x_aug) / torch.einsum('i,j->ij', x_abs, x_aug_abs)
+    sim_matrix = torch.exp(sim_matrix / T)
+    self_pos = sim_matrix[range(batch_size), range(batch_size)]
+
+    neg_sim = (sim_matrix.sum(dim=1) - self_pos)
+    loss = self_pos / neg_sim
+    loss = - torch.log(loss + 1e-8).mean()
+    pos_sim_ = self_pos.mean()
+    neg_sim_ = neg_sim.mean()
+
+    return loss, pos_sim_, neg_sim_
+
+
+  def loss_cal_rm_FN_only(self, x, x_aug, labels=None):
+
+    T = 0.2
+    batch_size, _ = x.size()
+    x_abs = x.norm(dim=1)
+    x_aug_abs = x_aug.norm(dim=1)
+
+    sim_matrix = torch.einsum('ik,jk->ij', x, x_aug) / torch.einsum('i,j->ij', x_abs, x_aug_abs)
+    sim_matrix = torch.exp(sim_matrix / T)
+    self_pos = sim_matrix[range(batch_size), range(batch_size)]
+
+    # modified: self -> positive; negative:take away all cheated
+    labels = labels.view(-1, 1)
+    pos_mask = labels.eq(labels.T)
+
+    # cal negative cheated (take away the real positive)
+    pos_sim = sim_matrix * pos_mask
+    pos_sim_sum = pos_sim.sum(dim=1)
+    neg_sim_sum = sim_matrix.sum(dim=1) - pos_sim_sum
+
+    loss = self_pos / neg_sim_sum
+    loss = -torch.log(loss + 1e-8).mean()  # avoid log(0)
+    pos_sim_ = self_pos.mean()
+    neg_sim_ = neg_sim_sum.mean()
     # get correct answer
     if get_cm:
         labels = labels.view(-1, 1)
@@ -168,8 +255,67 @@ class simclr(nn.Module):
         plot_similarity_distribution(sim_matrix=sim_matrix, pos_mask=pos_mask, file_name=f'sim_distribution_epoch_{epoch}_not_normalized')
         print("cm = ", cm)
 
-    return loss
+    return loss, pos_sim_, neg_sim_
+  
+  def loss_cal_cheated(self, x, x_aug, labels=None):
 
+    T = 0.2
+    batch_size, _ = x.size()
+    x_abs = x.norm(dim=1)
+    x_aug_abs = x_aug.norm(dim=1)
+
+    sim_matrix = torch.einsum('ik,jk->ij', x, x_aug) / torch.einsum('i,j->ij', x_abs, x_aug_abs)
+    sim_matrix = torch.exp(sim_matrix / T)
+    self_pos = sim_matrix[range(batch_size), range(batch_size)]
+
+    # modified:all pos and all neg cal
+    labels = labels.view(-1, 1)  # 轉換為 (batch_size, 1) 方便比較
+    pos_mask = labels.eq(labels.T)  # 創建相同類別的對應矩陣
+
+    # 選擇 positive pairs（不一定是對角線）
+    pos_sim = sim_matrix * pos_mask  # 只保留相同類別的相似度值
+    # pos_sim_sum = pos_sim.sum(dim=1)
+    pos_sim_sum = pos_sim.sum(dim=1) - torch.diag(pos_sim)  # 排除自己本身
+
+    neg_sim_sum = sim_matrix.sum(dim=1) - pos_sim_sum - torch.diag(pos_sim)  # 所有樣本總和 - 正樣本總和
+
+    loss = pos_sim_sum / neg_sim_sum
+    loss = -torch.log(loss + 1e-8).mean()  # 避免 log(0)
+    pos_sim_ = pos_sim_sum.mean() # not self pos
+    # pos_sim_ = self_pos.mean() # self pos
+    neg_sim_ = neg_sim_sum.mean()
+
+    return loss, pos_sim_, neg_sim_
+
+  def loss_cal_rm_FP_only(self, x, x_aug, labels=None):
+
+    T = 0.2
+    batch_size, _ = x.size()
+    x_abs = x.norm(dim=1)
+    x_aug_abs = x_aug.norm(dim=1)
+
+    sim_matrix = torch.einsum('ik,jk->ij', x, x_aug) / torch.einsum('i,j->ij', x_abs, x_aug_abs)
+    sim_matrix = torch.exp(sim_matrix / T)
+    self_pos = sim_matrix[range(batch_size), range(batch_size)]
+
+    # modified:all pos and all neg cal
+    labels = labels.view(-1, 1)  # 轉換為 (batch_size, 1) 方便比較
+    pos_mask = labels.eq(labels.T)  # 創建相同類別的對應矩陣
+
+    # 選擇 positive pairs（不一定是對角線）
+    pos_sim = sim_matrix * pos_mask  # 只保留相同類別的相似度值
+    # pos_sim_sum = pos_sim.sum(dim=1)
+    pos_sim_sum = pos_sim.sum(dim=1) - torch.diag(pos_sim)  # 排除自己本身
+
+    neg_sim_sum = sim_matrix.sum(dim=1) - self_pos  # 所有樣本總和 - 正樣本總和
+
+    loss = pos_sim_sum / neg_sim_sum
+    loss = -torch.log(loss + 1e-8).mean()  # 避免 log(0)
+    pos_sim_ = pos_sim_sum.mean() # not self pos
+    # pos_sim_ = self_pos.mean() # self pos
+    neg_sim_ = neg_sim_sum.mean()
+
+    return loss, pos_sim_, neg_sim_
 
 
 import random
@@ -187,16 +333,18 @@ if __name__ == '__main__':
     args = arg_parse()
     setup_seed(args.seed)
 
+    # tensorboard
+    writer = SummaryWriter(log_dir=f'logs/cheated_no_aug_500epochs/{args.DS}_{args.lr}/tensorboard_{args.aug}_{args.mode}_{time.ctime(time.time())}_{args.or_loss}')
+
     accuracies = {'val':[], 'test':[]}
     epochs = args.epochs
     log_interval = args.log_interval
     batch_size = args.batch_size
-    patience = 2
-    min_delta = 0.01
     aug_ratio = round(args.aug_ratio * 0.1, 1)
     loss_list = []
     loss_min = float('inf')
     stage_finish_epochs = []
+    odecay = args.odecay
     lr = args.lr
     DS = args.DS
     # path = osp.join(osp.dirname(osp.realpath(__file__)), '.', 'data', DS)
@@ -239,13 +387,16 @@ if __name__ == '__main__':
 
     for epoch in range(1, epochs+1):
         loss_all = 0
+        pos_sim_all = 0
+        neg_sim_all = 0
         model.train()
+        # labels = torch.empty(0, dtype=torch.long, device=device)
         for data in dataloader:
 
-            # print('start')
             data, data_aug = data
-            optimizer.zero_grad()
+            # labels = torch.cat([labels, data.y.to(device)], dim=0)
             labels = data.y.to(device)
+            optimizer.zero_grad()
             
             node_num, _ = data.x.size()
             data = data.to(device)
@@ -259,8 +410,6 @@ if __name__ == '__main__':
 
                 node_num_aug = len(idx_not_missing)
                 data_aug.x = data_aug.x[idx_not_missing]
-
-                
 
                 data_aug.batch = data.batch[idx_not_missing]
                 idx_dict = {idx_not_missing[n]:n for n in range(node_num_aug)}
@@ -282,20 +431,49 @@ if __name__ == '__main__':
             '''
 
             x_aug = model(data_aug.x, data_aug.edge_index, data_aug.batch, data_aug.num_graphs)
-            loss = model.loss_cal(x, x_aug, labels=labels, get_cm=True if epoch % log_interval == 0 else False, epoch=epoch)
+            if args.mode == 'normal':
+                loss, pos_sim, neg_sim = model.loss_cal_normal(x, x_aug, labels=labels, get_cm=True if epoch % log_interval == 0 else False, epoch=epoch, labels)
+            elif args.mode == 'cheated':
+                loss, pos_sim, neg_sim = model.loss_cal_cheated(x, x_aug, labels)
+            elif args.mode == 'rm_FN':
+                loss, pos_sim, neg_sim = model.loss_cal_rm_FN_only(x, x_aug, labels)
+            elif args.mode == 'rm_FP':
+                loss, pos_sim, neg_sim = model.loss_cal_rm_FP_only(x, x_aug, labels)
+            else:
+               raise RuntimeError(f"no mode matching {args.mode}, input should be: normal, cheated, rm_FN")
+
+            # print(x)
+            # print(x_aug)
+            oloss = odecay * l2_reg_ortho(model)
             loss_all += loss.item() * data.num_graphs
+            pos_sim_all += pos_sim.item()
+            neg_sim_all += neg_sim.item()
+            if args.or_loss:
+                loss += oloss
             loss.backward()
             optimizer.step()
+        # tensorboard
+        writer.add_scalar('Loss/train', loss_all / len(dataloader.dataset), epoch)
+        writer.add_scalar('Similarity/pos_sim', pos_sim_all / len(dataloader), epoch)
+        writer.add_scalar('Similarity/neg_sim', neg_sim_all / len(dataloader), epoch)
+
         print('Epoch {}, Loss {}'.format(epoch, loss_all / len(dataloader.dataset)))
+        print("pos sim = ", pos_sim_all, "; neg sim = ", neg_sim_all)
         loss_list.append(loss_all / len(dataloader.dataset))
 
         if epoch % log_interval == 0:
             model.eval()
             emb, y = model.encoder.get_embeddings(dataloader_eval)
             acc_val, acc = evaluate_embedding(emb, y)
+            singular_values = check_dimensional_collapse(emb)
+            for i, value in enumerate(singular_values):
+                writer.add_scalar(f'Singular_Values/{epoch}_{args.DS}', np.log10(value), i)
+
             accuracies['val'].append(acc_val)
             accuracies['test'].append(acc)
-
+            # tensorboard
+            writer.add_scalar('Accuracy/val', acc_val, epoch)
+            writer.add_scalar('Accuracy/test', acc, epoch)
 
     tpe  = ('local' if args.local else '') + ('prior' if args.prior else '')
     if not os.path.exists("./logs"):
