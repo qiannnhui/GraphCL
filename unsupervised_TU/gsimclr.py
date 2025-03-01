@@ -212,7 +212,7 @@ class simclr(nn.Module):
 
     return loss, pos_sim_, neg_sim_
 
-  def loss_cal_normal(self, x, x_aug, labels=None):
+  def loss_cal_normal(self, x, x_aug, labels=None, get_cm=False, epoch=None):
 
     T = 0.2
     batch_size, _ = x.size()
@@ -229,10 +229,21 @@ class simclr(nn.Module):
     pos_sim_ = self_pos.mean()
     neg_sim_ = neg_sim.mean()
 
+    if get_cm:
+        labels = labels.view(-1, 1)
+        pos_mask = labels.eq(labels.T)
+        normalized_sim_matrix = self.min_max_normalization(sim_matrix=sim_matrix)
+        cm = self.calculate_confusion_matrix(pos_mask=pos_mask, sim_matrix=normalized_sim_matrix)
+        plot_similarity_matrix(sim_matrix=sim_matrix, pos_mask=pos_mask, file_name=f'epoch_{epoch}_not_normalized_{args.aug}_{args.mode}')
+        plot_similarity_matrix(sim_matrix=normalized_sim_matrix, pos_mask=pos_mask, file_name=f'epoch_{epoch}_normalized_{args.aug}_{args.mode}')
+        plot_similarity_distribution(sim_matrix=normalized_sim_matrix, pos_mask=pos_mask, file_name=f'sim_distribution_epoch_{epoch}_normalized_{args.aug}_{args.mode}')
+        plot_similarity_distribution(sim_matrix=sim_matrix, pos_mask=pos_mask, file_name=f'sim_distribution_epoch_{epoch}_not_normalized_{args.aug}_{args.mode}')
+        print("cm = ", cm)
+
     return loss, pos_sim_, neg_sim_
 
 
-  def loss_cal_rm_FN_only(self, x, x_aug, labels=None):
+  def loss_cal_rm_FN_only(self, x, x_aug, labels=None, get_cm=False, epoch=None):
 
     T = 0.2
     batch_size, _ = x.size()
@@ -257,9 +268,20 @@ class simclr(nn.Module):
     pos_sim_ = self_pos.mean()
     neg_sim_ = neg_sim_sum.mean()
 
+    if get_cm:
+        labels = labels.view(-1, 1)
+        pos_mask = labels.eq(labels.T)
+        normalized_sim_matrix = self.min_max_normalization(sim_matrix=sim_matrix)
+        cm = self.calculate_confusion_matrix(pos_mask=pos_mask, sim_matrix=normalized_sim_matrix)
+        plot_similarity_matrix(sim_matrix=sim_matrix, pos_mask=pos_mask, file_name=f'epoch_{epoch}_not_normalized_{args.aug}_{args.mode}')
+        plot_similarity_matrix(sim_matrix=normalized_sim_matrix, pos_mask=pos_mask, file_name=f'epoch_{epoch}_normalized_{args.aug}_{args.mode}')
+        plot_similarity_distribution(sim_matrix=normalized_sim_matrix, pos_mask=pos_mask, file_name=f'sim_distribution_epoch_{epoch}_normalized_{args.aug}_{args.mode}')
+        plot_similarity_distribution(sim_matrix=sim_matrix, pos_mask=pos_mask, file_name=f'sim_distribution_epoch_{epoch}_not_normalized_{args.aug}_{args.mode}')
+        print("cm = ", cm)
+
     return loss, pos_sim_, neg_sim_
   
-  def loss_cal_cheated(self, x, x_aug, labels=None):
+  def loss_cal_cheated(self, x, x_aug, labels=None, get_cm=False, epoch=None):
 
     T = 0.2
     batch_size, _ = x.size()
@@ -287,9 +309,20 @@ class simclr(nn.Module):
     # pos_sim_ = self_pos.mean() # self pos
     neg_sim_ = neg_sim_sum.mean()
 
+    if get_cm:
+        labels = labels.view(-1, 1)
+        pos_mask = labels.eq(labels.T)
+        normalized_sim_matrix = self.min_max_normalization(sim_matrix=sim_matrix)
+        cm = self.calculate_confusion_matrix(pos_mask=pos_mask, sim_matrix=normalized_sim_matrix)
+        plot_similarity_matrix(sim_matrix=sim_matrix, pos_mask=pos_mask, file_name=f'epoch_{epoch}_not_normalized_{args.aug}_{args.mode}')
+        plot_similarity_matrix(sim_matrix=normalized_sim_matrix, pos_mask=pos_mask, file_name=f'epoch_{epoch}_normalized_{args.aug}_{args.mode}')
+        plot_similarity_distribution(sim_matrix=normalized_sim_matrix, pos_mask=pos_mask, file_name=f'sim_distribution_epoch_{epoch}_normalized_{args.aug}_{args.mode}')
+        plot_similarity_distribution(sim_matrix=sim_matrix, pos_mask=pos_mask, file_name=f'sim_distribution_epoch_{epoch}_not_normalized_{args.aug}_{args.mode}')
+        print("cm = ", cm)
+
     return loss, pos_sim_, neg_sim_
 
-  def loss_cal_rm_FP_only(self, x, x_aug, labels=None):
+  def loss_cal_rm_FP_only(self, x, x_aug, labels=None, get_cm=False, epoch=None):
 
     T = 0.2
     batch_size, _ = x.size()
@@ -316,6 +349,17 @@ class simclr(nn.Module):
     pos_sim_ = pos_sim_sum.mean() # not self pos
     # pos_sim_ = self_pos.mean() # self pos
     neg_sim_ = neg_sim_sum.mean()
+
+    if get_cm:
+        labels = labels.view(-1, 1)
+        pos_mask = labels.eq(labels.T)
+        normalized_sim_matrix = self.min_max_normalization(sim_matrix=sim_matrix)
+        cm = self.calculate_confusion_matrix(pos_mask=pos_mask, sim_matrix=normalized_sim_matrix)
+        plot_similarity_matrix(sim_matrix=sim_matrix, pos_mask=pos_mask, file_name=f'epoch_{epoch}_not_normalized_{args.aug}_{args.mode}')
+        plot_similarity_matrix(sim_matrix=normalized_sim_matrix, pos_mask=pos_mask, file_name=f'epoch_{epoch}_normalized_{args.aug}_{args.mode}')
+        plot_similarity_distribution(sim_matrix=normalized_sim_matrix, pos_mask=pos_mask, file_name=f'sim_distribution_epoch_{epoch}_normalized_{args.aug}_{args.mode}')
+        plot_similarity_distribution(sim_matrix=sim_matrix, pos_mask=pos_mask, file_name=f'sim_distribution_epoch_{epoch}_not_normalized_{args.aug}_{args.mode}')
+        print("cm = ", cm)
 
     return loss, pos_sim_, neg_sim_
 
@@ -436,11 +480,11 @@ if __name__ == '__main__':
             if args.mode == 'normal':
                 loss, pos_sim, neg_sim = model.loss_cal_normal(x, x_aug, labels=labels, get_cm=True if epoch % log_interval == 0 else False, epoch=epoch)
             elif args.mode == 'cheated':
-                loss, pos_sim, neg_sim = model.loss_cal_cheated(x, x_aug, labels)
+                loss, pos_sim, neg_sim = model.loss_cal_cheated(x, x_aug, labels, get_cm=True if epoch % log_interval == 0 else False, epoch=epoch)
             elif args.mode == 'rm_FN':
-                loss, pos_sim, neg_sim = model.loss_cal_rm_FN_only(x, x_aug, labels)
+                loss, pos_sim, neg_sim = model.loss_cal_rm_FN_only(x, x_aug, labels, get_cm=True if epoch % log_interval == 0 else False, epoch=epoch)
             elif args.mode == 'rm_FP':
-                loss, pos_sim, neg_sim = model.loss_cal_rm_FP_only(x, x_aug, labels)
+                loss, pos_sim, neg_sim = model.loss_cal_rm_FP_only(x, x_aug, labels, get_cm=True if epoch % log_interval == 0 else False, epoch=epoch)
             else:
                raise RuntimeError(f"no mode matching {args.mode}, input should be: normal, cheated, rm_FN")
 
