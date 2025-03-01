@@ -29,6 +29,9 @@ from model import *
 from arguments import arg_parse
 from torch_geometric.transforms import Constant
 import pdb
+from sklearn.metrics import confusion_matrix
+from plot_similarity import plot_similarity_matrix
+from plot_sim_distribution import plot_similarity_distribution
 
 
 class GcnInfomax(nn.Module):
@@ -125,7 +128,23 @@ class simclr(nn.Module):
     
     return y
 
-  def loss_cal(self, x, x_aug):
+  def min_max_normalization(self, sim_matrix):
+      
+      min_sim = sim_matrix.min()
+      max_sim = sim_matrix.max()
+      normalized_sim = (sim_matrix - min_sim) / (max_sim - min_sim)
+        
+      return normalized_sim
+
+  def calculate_confusion_matrix(self, sim_matrix, pos_mask):
+
+      true_labels = pos_mask.float().view(-1).cpu().numpy()  # 轉換為 1D
+      pred_labels = (sim_matrix.view(-1) > 0.8).float().cpu().numpy()  # 相似度 > 0.5 判斷為正樣本
+      cm = confusion_matrix(true_labels, pred_labels)
+
+      return cm
+
+  def loss_cal(self, x, x_aug, labels, get_cm=False, epoch=None):
 
     T = 0.2
     batch_size, _ = x.size()
@@ -137,8 +156,20 @@ class simclr(nn.Module):
     pos_sim = sim_matrix[range(batch_size), range(batch_size)]
     loss = pos_sim / (sim_matrix.sum(dim=1) - pos_sim)
     loss = - torch.log(loss).mean()
+    # get correct answer
+    if get_cm:
+        labels = labels.view(-1, 1)
+        pos_mask = labels.eq(labels.T)
+        normalized_sim_matrix = self.min_max_normalization(sim_matrix=sim_matrix)
+        cm = self.calculate_confusion_matrix(pos_mask=pos_mask, sim_matrix=normalized_sim_matrix)
+        plot_similarity_matrix(sim_matrix=sim_matrix, pos_mask=pos_mask, file_name=f'epoch_{epoch}_not_normalized')
+        plot_similarity_matrix(sim_matrix=normalized_sim_matrix, pos_mask=pos_mask, file_name=f'epoch_{epoch}_normalized')
+        plot_similarity_distribution(sim_matrix=normalized_sim_matrix, pos_mask=pos_mask, file_name=f'sim_distribution_epoch_{epoch}_normalized')
+        plot_similarity_distribution(sim_matrix=sim_matrix, pos_mask=pos_mask, file_name=f'sim_distribution_epoch_{epoch}_not_normalized')
+        print("cm = ", cm)
 
     return loss
+
 
 
 import random
@@ -214,7 +245,7 @@ if __name__ == '__main__':
             # print('start')
             data, data_aug = data
             optimizer.zero_grad()
-
+            labels = data.y.to(device)
             
             node_num, _ = data.x.size()
             data = data.to(device)
@@ -251,7 +282,7 @@ if __name__ == '__main__':
             '''
 
             x_aug = model(data_aug.x, data_aug.edge_index, data_aug.batch, data_aug.num_graphs)
-            loss = model.loss_cal(x, x_aug)
+            loss = model.loss_cal(x, x_aug, labels=labels, get_cm=True if epoch % log_interval == 0 else False, epoch=epoch)
             loss_all += loss.item() * data.num_graphs
             loss.backward()
             optimizer.step()
@@ -264,7 +295,7 @@ if __name__ == '__main__':
             acc_val, acc = evaluate_embedding(emb, y)
             accuracies['val'].append(acc_val)
             accuracies['test'].append(acc)
-            
+
 
     tpe  = ('local' if args.local else '') + ('prior' if args.prior else '')
     if not os.path.exists("./logs"):
