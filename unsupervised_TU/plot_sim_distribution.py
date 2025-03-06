@@ -24,7 +24,7 @@ def get_sim_mask(sim_matrix, pos_mask, neg_mask):
 def plot_similarity_distribution(sim_matrix, pos_mask, neg_mask, args, epoch):
 
     pos_sim, neg_sim = get_sim_mask(sim_matrix, pos_mask, neg_mask)
-    dir = os.path.join("logs", "sim_dist", args.DS, args.mode, args.aug)
+    dir = os.path.join("logs", "sim_dist", args.DS, args.lr, args.mode, args.aug)
 
     if not os.path.exists(dir):
         os.makedirs(dir, exist_ok=True)  # The exist_ok=True will prevent error if directory exists
