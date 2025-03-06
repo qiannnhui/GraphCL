@@ -203,8 +203,8 @@ class simclr(nn.Module):
     x_abs = x.norm(dim=1)
     x_aug_abs = x_aug.norm(dim=1)
 
-    sim_matrix = torch.einsum('ik,jk->ij', x, x_aug) / torch.einsum('i,j->ij', x_abs, x_aug_abs)
-    sim_matrix = torch.exp(sim_matrix / T)
+    cos_sim_matrix = torch.einsum('ik,jk->ij', x, x_aug) / torch.einsum('i,j->ij', x_abs, x_aug_abs)
+    sim_matrix = torch.exp(cos_sim_matrix / T)
     self_pos = sim_matrix[range(batch_size), range(batch_size)]
 
     neg_sim = (sim_matrix.sum(dim=1) - self_pos)
@@ -214,7 +214,7 @@ class simclr(nn.Module):
     neg_sim_ = neg_sim.mean()
 
     if get_cm:
-       self.get_confusion_matrix(labels=labels, sim_matrix=sim_matrix, args=args, epoch=epoch)
+       self.get_confusion_matrix(labels=labels, sim_matrix=cos_sim_matrix, args=args, epoch=epoch)
 
     return loss, pos_sim_, neg_sim_
 
@@ -226,8 +226,8 @@ class simclr(nn.Module):
     x_abs = x.norm(dim=1)
     x_aug_abs = x_aug.norm(dim=1)
 
-    sim_matrix = torch.einsum('ik,jk->ij', x, x_aug) / torch.einsum('i,j->ij', x_abs, x_aug_abs)
-    sim_matrix = torch.exp(sim_matrix / T)
+    cos_sim_matrix = torch.einsum('ik,jk->ij', x, x_aug) / torch.einsum('i,j->ij', x_abs, x_aug_abs)
+    sim_matrix = torch.exp(cos_sim_matrix / T)
     self_pos = sim_matrix[range(batch_size), range(batch_size)]
 
     # modified: self -> positive; negative:take away all cheated
@@ -245,7 +245,7 @@ class simclr(nn.Module):
     neg_sim_ = neg_sim_sum.mean()
 
     if get_cm:
-       self.get_confusion_matrix(labels=labels, sim_matrix=sim_matrix, args=args, epoch=epoch)
+       self.get_confusion_matrix(labels=labels, sim_matrix=cos_sim_matrix, args=args, epoch=epoch)
 
     return loss, pos_sim_, neg_sim_
   
@@ -257,8 +257,8 @@ class simclr(nn.Module):
     x_abs = x.norm(dim=1)
     x_aug_abs = x_aug.norm(dim=1)
 
-    sim_matrix = torch.einsum('ik,jk->ij', x, x_aug) / torch.einsum('i,j->ij', x_abs, x_aug_abs)
-    sim_matrix = torch.exp(sim_matrix / T)
+    cos_sim_matrix = torch.einsum('ik,jk->ij', x, x_aug) / torch.einsum('i,j->ij', x_abs, x_aug_abs)
+    sim_matrix = torch.exp(cos_sim_matrix / T)
     self_pos = sim_matrix[range(batch_size), range(batch_size)]
 
     # modified:all pos and all neg cal
@@ -279,7 +279,7 @@ class simclr(nn.Module):
     neg_sim_ = neg_sim_sum.mean()
 
     if get_cm:
-       self.get_confusion_matrix(labels=labels, sim_matrix=sim_matrix, args=args, epoch=epoch)
+       self.get_confusion_matrix(labels=labels, sim_matrix=cos_sim_matrix, args=args, epoch=epoch)
 
     return loss, pos_sim_, neg_sim_
 
@@ -290,8 +290,8 @@ class simclr(nn.Module):
     x_abs = x.norm(dim=1)
     x_aug_abs = x_aug.norm(dim=1)
 
-    sim_matrix = torch.einsum('ik,jk->ij', x, x_aug) / torch.einsum('i,j->ij', x_abs, x_aug_abs)
-    sim_matrix = torch.exp(sim_matrix / T)
+    cos_sim_matrix = torch.einsum('ik,jk->ij', x, x_aug) / torch.einsum('i,j->ij', x_abs, x_aug_abs)
+    sim_matrix = torch.exp(cos_sim_matrix / T)
     self_pos = sim_matrix[range(batch_size), range(batch_size)]
 
     # modified:all pos and all neg cal
@@ -312,7 +312,7 @@ class simclr(nn.Module):
     neg_sim_ = neg_sim_sum.mean()
 
     if get_cm:
-       self.get_confusion_matrix(labels=labels, sim_matrix=sim_matrix, args=args, epoch=epoch)
+       self.get_confusion_matrix(labels=labels, sim_matrix=cos_sim_matrix, args=args, epoch=epoch)
 
     return loss, pos_sim_, neg_sim_
 
