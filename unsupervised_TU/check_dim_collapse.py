@@ -13,18 +13,7 @@ def check_dimensional_collapse(embeddings):
     # z = np.transpose(z)
     # c = np.cov(z)
     # _, singular_values, _ = np.linalg.svd(c)
-    device = sim_matrix.device
-    batch_size = sim_matrix.size(0)
-    
-    # Create a mask for the upper triangle (i < j) to avoid duplicate samples
-    mask = torch.triu(torch.ones(batch_size, batch_size), diagonal=1).bool().to(device)
 
-    # Get the positive pairs (same label)
-    pos_mask = pos_mask.masked_select(mask)  # only upper triangle, no duplicates
-    neg_mask = neg_mask.masked_select(mask)
-
-    pos_sim = sim_matrix.masked_select(mask) * pos_mask.float()
-    neg_sim = sim_matrix.masked_select(mask) * neg_mask.float()
     # Step 1: Normalize embeddings
     embeddings = torch.nn.functional.normalize(embeddings, dim=1)
     

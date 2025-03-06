@@ -152,10 +152,8 @@ class simclr(nn.Module):
     labels = labels.view(-1, 1)
     pos_mask = labels.eq(labels.T)
     neg_mask = ~pos_mask
-    
     # remove self-positive pairs
-    pos_mask = pos_mask - torch.diag(torch.ones(labels.size(0), device=labels.device))
-    neg_mask = neg_mask - torch.diag(torch.ones(labels.size(0), device=labels.device))
+    pos_mask = pos_mask & ~torch.diag(torch.ones(labels.size(0), device=labels.device, dtype=torch.bool))
 
     return pos_mask, neg_mask
 

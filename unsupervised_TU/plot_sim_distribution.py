@@ -39,14 +39,14 @@ def plot_similarity_distribution(sim_matrix, pos_mask, neg_mask, args, epoch):
     # KDE plot for positive pairs (red)
     sns.kdeplot(pos_sim_np, shade=True, color="red", label="Positive Pairs", ax=axes[0])
     axes[0].set_title("Cosine Similarity Distribution - Positive Pairs")
-    axes[0].set_xlabel("Cosine Similarity")
+    axes[0].set_xlabel("Cosine Similarity / tau")
     axes[0].set_ylabel("Density")
     axes[0].legend()
 
     # KDE plot for negative pairs (purple)
     sns.kdeplot(neg_sim_np, shade=True, color="magenta", label="Negative Pairs", ax=axes[1])
     axes[1].set_title("Cosine Similarity Distribution - Negative Pairs")
-    axes[1].set_xlabel("Cosine Similarity")
+    axes[1].set_xlabel("Cosine Similarity / tau")
     axes[1].set_ylabel("Density")
     axes[1].legend()
 
