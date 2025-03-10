@@ -27,7 +27,6 @@ from evaluate_embedding import evaluate_embedding
 from model import *
 
 from arguments import arg_parse
-from torch_geometric.transforms import Constant
 from check_dim_collapse import check_dimensional_collapse
 from ortho_loss import l2_reg_ortho
 from torch.utils.tensorboard import SummaryWriter
@@ -35,7 +34,14 @@ import time
 from sklearn.metrics import confusion_matrix
 from plot_similarity import plot_similarity_matrix
 from plot_sim_distribution import plot_similarity_distribution
+import torch_geometric.transforms as T
+from torch_geometric.transforms import BaseTransform
 
+
+class Add_Indices(BaseTransform):
+    def __call__(self, data):
+        data.indices = torch.tensor([0])
+        return data
 
 class GcnInfomax(nn.Module):
   def __init__(self, hidden_dim, num_gc_layers, alpha=0.5, beta=1., gamma=.1):
@@ -350,10 +356,9 @@ if __name__ == '__main__':
     path = osp.join(args.path, DS)
     # kf = StratifiedKFold(n_splits=10, shuffle=True, random_state=None)
 
-    dataset = TUDataset(path, name=DS, aug=args.aug, aug_ratio=aug_ratio).shuffle()
+    # dataset = TUDataset(path, name=DS, aug=args.aug, aug_ratio=aug_ratio).shuffle()
+    dataset = TUDataset(path, name=DS, aug=args.aug, transform=T.Compose([Add_Indices()])).shuffle()
     dataset_eval = TUDataset(path, name=DS, aug='none').shuffle()
-    print(len(dataset))
-    print(dataset.get_num_feature())
     try:
         dataset_num_features = dataset.get_num_feature()
     except:
