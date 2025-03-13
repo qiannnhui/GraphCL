@@ -34,14 +34,7 @@ import time
 from sklearn.metrics import confusion_matrix
 from plot_similarity import plot_similarity_matrix
 from plot_sim_distribution import plot_similarity_distribution
-import torch_geometric.transforms as T
-from torch_geometric.transforms import BaseTransform
-
-
-class Add_Indices(BaseTransform):
-    def __call__(self, data):
-        data.indices = torch.tensor([0])
-        return data
+from plot_tsne import visualize_embeddings
 
 class GcnInfomax(nn.Module):
   def __init__(self, hidden_dim, num_gc_layers, alpha=0.5, beta=1., gamma=.1):
@@ -339,7 +332,7 @@ if __name__ == '__main__':
     setup_seed(args.seed)
 
     # tensorboard
-    writer = SummaryWriter(log_dir=f'logs/cheated_no_aug_500epochs/{args.DS}_{args.lr}/tensorboard_{args.aug}_{args.mode}_{time.ctime(time.time())}_{args.or_loss}')
+    writer = SummaryWriter(log_dir=f'logs/500epochs_log_interval_10/{args.DS}_{args.lr}/tensorboard_{args.aug}_{args.mode}_{time.ctime(time.time())}_{args.or_loss}')
 
     accuracies = {'val':[], 'test':[]}
     epochs = args.epochs
@@ -356,8 +349,7 @@ if __name__ == '__main__':
     path = osp.join(args.path, DS)
     # kf = StratifiedKFold(n_splits=10, shuffle=True, random_state=None)
 
-    # dataset = TUDataset(path, name=DS, aug=args.aug, aug_ratio=aug_ratio).shuffle()
-    dataset = TUDataset(path, name=DS, aug=args.aug, transform=T.Compose([Add_Indices()])).shuffle()
+    dataset = TUDataset(path, name=DS, aug=args.aug, aug_ratio=aug_ratio).shuffle()
     dataset_eval = TUDataset(path, name=DS, aug='none').shuffle()
     try:
         dataset_num_features = dataset.get_num_feature()
@@ -389,7 +381,7 @@ if __name__ == '__main__':
     accuracies['test'].append(acc)
     """
 
-    for epoch in range(1, epochs+1):
+    for epoch in range(0, epochs+1):
         loss_all = 0
         pos_sim_all = 0
         neg_sim_all = 0
@@ -436,13 +428,17 @@ if __name__ == '__main__':
 
             x_aug = model(data_aug.x, data_aug.edge_index, data_aug.batch, data_aug.num_graphs)
             if args.mode == 'normal':
-                loss, pos_sim, neg_sim = model.loss_cal_normal(x, x_aug, labels=labels, get_cm=True if epoch % log_interval == 0 else False, epoch=epoch)
+                # loss, pos_sim, neg_sim = model.loss_cal_normal(x, x_aug, labels=labels, get_cm=True if epoch % log_interval == 0 else False, epoch=epoch)
+                loss, pos_sim, neg_sim = model.loss_cal_normal(x, x_aug, labels=labels, get_cm=False, epoch=epoch)
             elif args.mode == 'cheated':
-                loss, pos_sim, neg_sim = model.loss_cal_cheated(x, x_aug, labels, get_cm=True if epoch % log_interval == 0 else False, epoch=epoch)
+                # loss, pos_sim, neg_sim = model.loss_cal_cheated(x, x_aug, labels, get_cm=True if epoch % log_interval == 0 else False, epoch=epoch)
+                loss, pos_sim, neg_sim = model.loss_cal_cheated(x, x_aug, labels, get_cm=False, epoch=epoch)
             elif args.mode == 'rm_FN':
-                loss, pos_sim, neg_sim = model.loss_cal_rm_FN_only(x, x_aug, labels, get_cm=True if epoch % log_interval == 0 else False, epoch=epoch)
+                # loss, pos_sim, neg_sim = model.loss_cal_rm_FN_only(x, x_aug, labels, get_cm=True if epoch % log_interval == 0 else False, epoch=epoch)
+                loss, pos_sim, neg_sim = model.loss_cal_rm_FN_only(x, x_aug, labels, get_cm=False, epoch=epoch)
             elif args.mode == 'rm_FP':
-                loss, pos_sim, neg_sim = model.loss_cal_rm_FP_only(x, x_aug, labels, get_cm=True if epoch % log_interval == 0 else False, epoch=epoch)
+                # loss, pos_sim, neg_sim = model.loss_cal_rm_FP_only(x, x_aug, labels, get_cm=True if epoch % log_interval == 0 else False, epoch=epoch)
+                loss, pos_sim, neg_sim = model.loss_cal_rm_FP_only(x, x_aug, labels, get_cm=False, epoch=epoch)
             else:
                raise RuntimeError(f"no mode matching {args.mode}, input should be: normal, cheated, rm_FN")
 
@@ -464,10 +460,10 @@ if __name__ == '__main__':
         print('Epoch {}, Loss {}'.format(epoch, loss_all / len(dataloader.dataset)))
         print("pos sim = ", pos_sim_all, "; neg sim = ", neg_sim_all)
         loss_list.append(loss_all / len(dataloader.dataset))
-
         if epoch % log_interval == 0:
             model.eval()
             emb, y = model.encoder.get_embeddings(dataloader_eval)
+            visualize_embeddings(emb, y, args, epoch, method="t-SNE")
             acc_val, acc = evaluate_embedding(emb, y)
             singular_values = check_dimensional_collapse(emb)
             for i, value in enumerate(singular_values):

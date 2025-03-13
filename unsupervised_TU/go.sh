@@ -1,6 +1,6 @@
 #!/bin/bash -ex
-# for DATASET in ENZYMES
-# for DATASET in MUTAG PROTEINS ENZYMES MSRC_21
+# for DATASET in PROTEINS
+# for DATASET in MUTAG PROTEINS ENZYMES MSRC_21 DD COLLAB
 # for DATASET in ENZYMES MSRC_21
 # for DATASET in MSRC_21 PROTEINS DD COLLAB REDDIT-BINARY IMDB-BINARY NCI1
 for DATASET in IMDB-BINARY NCI1 COLLAB REDDIT-BINARY
@@ -15,7 +15,7 @@ do
       for lr in 1e-4 5e-5
       do
         # CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DATASET --lr 0.01 --local --num-gc-layers 5 --aug $AUG --seed $seed --aug_ratio $aug_ratio
-        CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DATASET --lr $lr --local --num-gc-layers 5 --aug $AUG --mode $mode --log_interval 100 --epochs 500
+        CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DATASET --lr $lr --local --num-gc-layers 5 --aug $AUG --mode $mode --log_interval 10 --epochs 500
         # CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DATASET --lr 0.01 --local --num-gc-layers 5 --aug $AUG --seed $seed --aug_ratio $aug_ratio --mode $mode --or_loss
       done
     done
