@@ -205,7 +205,6 @@ class TUDataset_aug(InMemoryDataset):
 
     def get(self, idx):
         data = self.data.__class__()
-        print(data)
 
         if hasattr(self.data, '__num_nodes__'):
             print("IMDB node num =", self.data.__num_nodes__)
