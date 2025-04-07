@@ -91,201 +91,402 @@ class GcnInfomax(nn.Module):
 
 
 class simclr(nn.Module):
-  def __init__(self, hidden_dim, num_gc_layers, alpha=0.5, beta=1., gamma=.1):
-    super(simclr, self).__init__()
+    def __init__(self, hidden_dim, num_gc_layers, alpha=0.5, beta=1., gamma=.1):
+        super(simclr, self).__init__()
 
-    self.alpha = alpha
-    self.beta = beta
-    self.gamma = gamma
-    self.prior = args.prior
+        self.alpha = alpha
+        self.beta = beta
+        self.gamma = gamma
+        self.prior = args.prior
 
-    self.embedding_dim = mi_units = hidden_dim * num_gc_layers
-    self.encoder = Encoder(dataset_num_features, hidden_dim, num_gc_layers)
+        self.embedding_dim = mi_units = hidden_dim * num_gc_layers
+        self.encoder = Encoder(dataset_num_features, hidden_dim, num_gc_layers)
 
-    self.proj_head = nn.Sequential(nn.Linear(self.embedding_dim, self.embedding_dim), nn.ReLU(inplace=True), nn.Linear(self.embedding_dim, self.embedding_dim))
+        self.proj_head = nn.Sequential(nn.Linear(self.embedding_dim, self.embedding_dim), nn.ReLU(inplace=True), nn.Linear(self.embedding_dim, self.embedding_dim))
 
-    self.init_emb()
+        self.init_emb()
 
-  def init_emb(self):
-    initrange = -1.5 / self.embedding_dim
-    for m in self.modules():
-        if isinstance(m, nn.Linear):
-            torch.nn.init.xavier_uniform_(m.weight.data)
-            if m.bias is not None:
-                m.bias.data.fill_(0.0)
+    def init_emb(self):
+        initrange = -1.5 / self.embedding_dim
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                torch.nn.init.xavier_uniform_(m.weight.data)
+                if m.bias is not None:
+                    m.bias.data.fill_(0.0)
 
 
-  def forward(self, x, edge_index, batch, num_graphs):
+    def forward(self, x, edge_index, batch, num_graphs):
 
-    # batch_size = data.num_graphs
-    if x is None:
-        x = torch.ones(batch.shape[0]).to(device)
+        # batch_size = data.num_graphs
+        if x is None:
+            x = torch.ones(batch.shape[0]).to(device)
 
-    y, M = self.encoder(x, edge_index, batch)
+        y, M = self.encoder(x, edge_index, batch)
+        
+        y = self.proj_head(y)
+        
+        return y
+
+    def loss_cal(self, x, x_aug, labels=None):
+
+        T = 0.2
+        batch_size, _ = x.size()
+        x_abs = x.norm(dim=1)
+        x_aug_abs = x_aug.norm(dim=1)
+
+        sim_matrix = torch.einsum('ik,jk->ij', x, x_aug) / torch.einsum('i,j->ij', x_abs, x_aug_abs)
+        sim_matrix = torch.exp(sim_matrix / T)
+        self_pos = sim_matrix[range(batch_size), range(batch_size)]
+
+        # # modified:all pos and all neg cal
+        # labels = labels.view(-1, 1)  # 轉換為 (batch_size, 1) 方便比較
+        # pos_mask = labels.eq(labels.T)  # 創建相同類別的對應矩陣
+
+        # # 選擇 positive pairs（不一定是對角線）
+        # pos_sim = sim_matrix * pos_mask  # 只保留相同類別的相似度值
+        # pos_sim_sum = pos_sim.sum(dim=1)
+        # # pos_sim_sum = pos_sim.sum(dim=1) - torch.diag(pos_sim)  # 排除自己本身
+
+        # neg_sim_sum = sim_matrix.sum(dim=1) - pos_sim_sum  # 所有樣本總和 - 正樣本總和
+
+        # loss = pos_sim_sum / neg_sim_sum
+        # loss = -torch.log(loss + 1e-8).mean()  # 避免 log(0)
+        # pos_sim_ = pos_sim_sum.mean()
+        # neg_sim_ = neg_sim_sum.mean()
+
+
+        # modified: self -> positive; negative:take away all cheated
+        labels = labels.view(-1, 1)
+        pos_mask = labels.eq(labels.T)
+
+        # cal negative cheated (take away the real positive)
+        pos_sim = sim_matrix * pos_mask
+        pos_sim_sum = pos_sim.sum(dim=1)
+        neg_sim_sum = sim_matrix.sum(dim=1) - pos_sim_sum
+
+        loss = self_pos / neg_sim_sum
+        loss = -torch.log(loss + 1e-8).mean()  # 避免 log(0)
+        pos_sim_ = self_pos.mean()
+        neg_sim_ = neg_sim_sum.mean()
+
+        
+        # original code:
+        # # pos_sim = sim_matrix[range(batch_size), range(batch_size)]
+        # neg_sim = (sim_matrix.sum(dim=1) - pos_sim)
+        # loss = self_pos / neg_sim
+        # loss = - torch.log(loss).mean()
+        # pos_sim_ = pos_sim.mean()
+        # neg_sim_ = neg_sim.mean()
+
+        return loss, pos_sim_, neg_sim_
+
+    def loss_cal_normal(self, x, x_aug, labels=None):
+
+        T = 0.2
+        batch_size, _ = x.size()
+        x_abs = x.norm(dim=1)
+        x_aug_abs = x_aug.norm(dim=1)
+
+        sim_matrix = torch.einsum('ik,jk->ij', x, x_aug) / torch.einsum('i,j->ij', x_abs, x_aug_abs)
+        sim_matrix = torch.exp(sim_matrix / T)
+        self_pos = sim_matrix[range(batch_size), range(batch_size)]
+
+        neg_sim = (sim_matrix.sum(dim=1) - self_pos)
+        loss = self_pos / neg_sim
+        loss = - torch.log(loss + 1e-8).mean()
+        pos_sim_ = self_pos.mean()
+        neg_sim_ = neg_sim.mean()
+
+        return loss, pos_sim_, neg_sim_
+
+
+    def loss_cal_rm_FN_only(self, x, x_aug, labels=None):
+
+        T = 0.2
+        batch_size, _ = x.size()
+        x_abs = x.norm(dim=1)
+        x_aug_abs = x_aug.norm(dim=1)
+
+        sim_matrix = torch.einsum('ik,jk->ij', x, x_aug) / torch.einsum('i,j->ij', x_abs, x_aug_abs)
+        sim_matrix = torch.exp(sim_matrix / T)
+        self_pos = sim_matrix[range(batch_size), range(batch_size)]
+
+        # modified: self -> positive; negative:take away all cheated
+        labels = labels.view(-1, 1)
+        pos_mask = labels.eq(labels.T)
+
+        # cal negative cheated (take away the real positive)
+        pos_sim = sim_matrix * pos_mask
+        pos_sim_sum = pos_sim.sum(dim=1)
+        neg_sim_sum = sim_matrix.sum(dim=1) - pos_sim_sum
+
+        loss = self_pos / neg_sim_sum
+        loss = -torch.log(loss + 1e-8).mean()  # avoid log(0)
+        pos_sim_ = self_pos.mean()
+        neg_sim_ = neg_sim_sum.mean()
+
+        return loss, pos_sim_, neg_sim_
     
-    y = self.proj_head(y)
+    def loss_cal_cheated(self, x, x_aug, labels=None):
+
+        T = 0.2
+        batch_size, _ = x.size()
+        x_abs = x.norm(dim=1)
+        x_aug_abs = x_aug.norm(dim=1)
+
+        sim_matrix = torch.einsum('ik,jk->ij', x, x_aug) / torch.einsum('i,j->ij', x_abs, x_aug_abs)
+        sim_matrix = torch.exp(sim_matrix / T)
+        self_pos = sim_matrix[range(batch_size), range(batch_size)]
+
+        # modified:all pos and all neg cal
+        labels = labels.view(-1, 1)  # 轉換為 (batch_size, 1) 方便比較
+        pos_mask = labels.eq(labels.T)  # 創建相同類別的對應矩陣
+
+        # 選擇 positive pairs（不一定是對角線）
+        pos_sim = sim_matrix * pos_mask  # 只保留相同類別的相似度值
+        # pos_sim_sum = pos_sim.sum(dim=1)
+        pos_sim_sum = pos_sim.sum(dim=1) - torch.diag(pos_sim)  # 排除自己本身
+
+        neg_sim_sum = sim_matrix.sum(dim=1) - pos_sim_sum - torch.diag(pos_sim)  # 所有樣本總和 - 正樣本總和
+
+        loss = pos_sim_sum / neg_sim_sum
+        loss = -torch.log(loss + 1e-8).mean()  # 避免 log(0)
+        pos_sim_ = pos_sim_sum.mean() # not self pos
+        # pos_sim_ = self_pos.mean() # self pos
+        neg_sim_ = neg_sim_sum.mean()
+
+        return loss, pos_sim_, neg_sim_
+
+    def loss_cal_rm_FP_only(self, x, x_aug, labels=None):
+
+        T = 0.2
+        batch_size, _ = x.size()
+        x_abs = x.norm(dim=1)
+        x_aug_abs = x_aug.norm(dim=1)
+
+        sim_matrix = torch.einsum('ik,jk->ij', x, x_aug) / torch.einsum('i,j->ij', x_abs, x_aug_abs)
+        sim_matrix = torch.exp(sim_matrix / T)
+        self_pos = sim_matrix[range(batch_size), range(batch_size)]
+
+        # modified:all pos and all neg cal
+        labels = labels.view(-1, 1)  # 轉換為 (batch_size, 1) 方便比較
+        pos_mask = labels.eq(labels.T)  # 創建相同類別的對應矩陣
+
+        # 選擇 positive pairs（不一定是對角線）
+        pos_sim = sim_matrix * pos_mask  # 只保留相同類別的相似度值
+        # pos_sim_sum = pos_sim.sum(dim=1)
+        pos_sim_sum = pos_sim.sum(dim=1) - torch.diag(pos_sim)  # 排除自己本身
+
+        neg_sim_sum = sim_matrix.sum(dim=1) - self_pos  # 所有樣本總和 - 正樣本總和
+
+        loss = pos_sim_sum / neg_sim_sum
+        loss = -torch.log(loss + 1e-8).mean()  # 避免 log(0)
+        pos_sim_ = pos_sim_sum.mean() # not self pos
+        # pos_sim_ = self_pos.mean() # self pos
+        neg_sim_ = neg_sim_sum.mean()
+
+        return loss, pos_sim_, neg_sim_
+
+    def loss_cal_pull_neg(self, x, x_aug, labels=None):
+        T = 0.2
+        batch_size, _ = x.size()
+        x_abs = x.norm(dim=1)
+        x_aug_abs = x_aug.norm(dim=1)
+
+        sim_matrix = torch.einsum('ik,jk->ij', x, x_aug) / torch.einsum('i,j->ij', x_abs, x_aug_abs)
+        sim_matrix = torch.exp(sim_matrix / T)
+        
+        self_pos = sim_matrix[range(batch_size), range(batch_size)]  # 自己與自己之間的相似度
+
+        # 根據 labels 確定正負樣本對
+        labels = labels.view(-1, 1)  # 將標籤轉換為 (batch_size, 1) 方便比較
+        pos_mask = labels.eq(labels.T)  # 創建正樣本對應矩陣
+        neg_mask = ~pos_mask  # 創建負樣本對應矩陣
+
+        # 隨機選擇一個負樣本，從所有負樣本中選擇一個
+        neg_indices = torch.where(neg_mask.sum(dim=1) > 0)[0]  # 找到有負樣本的樣本索引
+        random_neg_index = neg_indices[torch.randint(0, neg_indices.size(0), (1,))]  # 隨機選擇一個負樣本的索引
+
+        # 這樣隨機選擇的負樣本索引會被用來進一步計算損失
+        random_neg_sim = sim_matrix[range(batch_size), random_neg_index]  # 自己與隨機選擇的負樣本的相似度
+
+        # 分母：扣掉已經選擇的負樣本
+        neg_sim = sim_matrix.sum(dim=1) - self_pos  # 所有負樣本的相似度總和，扣除自己和自己之間的相似度
+        neg_sim = neg_sim - random_neg_sim  # 扣除選定的負樣本
+
+        # 損失計算：分子是隨機選擇的負樣本的相似度，分母是其餘負樣本的相似度總和
+        loss = random_neg_sim / neg_sim
+        loss = -torch.log(loss + 1e-8).mean()  # 避免log(0)
+
+        pos_sim_ = self_pos.mean()
+        neg_sim_ = neg_sim.mean()
+
+        return loss, pos_sim_, neg_sim_
+
+
+    def loss_cal_single_other_neg(self, x, x_aug, labels=None):
+        device = x.device
+        T = 0.2
+        batch_size, _ = x.size()
+        x_abs = x.norm(dim=1)
+        x_aug_abs = x_aug.norm(dim=1)
+
+        sim_matrix = torch.einsum('ik,jk->ij', x, x_aug) / torch.einsum('i,j->ij', x_abs, x_aug_abs)
+        sim_matrix = torch.exp(sim_matrix / T)
+        
+        self_pos = sim_matrix[range(batch_size), range(batch_size)]  # 自己與自己之間的相似度
+
+        # 根據 labels 確定正負樣本對
+        labels = labels.view(-1, 1)  # 將標籤轉換為 (batch_size, 1) 方便比較
+        pos_mask = labels.eq(labels.T)  # 創建正樣本對應矩陣
+        neg_mask = ~pos_mask  # 創建負樣本對應矩陣
+
+        random_neg_sim = torch.zeros(batch_size).to(device)  # 用來存儲每個樣本的正樣本相似度
+
+        for i in range(batch_size):
+            # 找到對應的正樣本索引
+            neg_indices = torch.where(neg_mask[i] == 1)[0]  # 這一行找出樣本 i 的正樣本
+            random_neg_index = neg_indices[torch.randint(0, neg_indices.size(0), (1,))]  # 隨機選擇一個正樣本
+            random_neg_sim[i] = sim_matrix[i, random_neg_index]  # 計算與隨機選擇的正樣本的相似度
+
+        # 分母：扣掉已經選擇的負樣本
+        neg_sim = sim_matrix.sum(dim=1) - self_pos  # 所有負樣本的相似度總和，扣除自己和自己之間的相似度
+        for i in range(batch_size):
+            neg_sim[i] -= random_neg_sim[i]  # 每行減去隨機選擇的正樣本的相似度
+            
+        # 損失計算：分子是隨機選擇的負樣本的相似度，分母是其餘負樣本的相似度總和
+        loss = random_neg_sim / neg_sim
+        loss = -torch.log(loss + 1e-8).mean()  # 避免log(0)
+
+        pos_sim_ = self_pos.mean()
+        neg_sim_ = neg_sim.mean()
+        
+        return loss, pos_sim_, neg_sim_
     
-    return y
 
-  def loss_cal(self, x, x_aug, labels=None):
+    def loss_cal_pull_neg_rm_FN(self, x, x_aug, labels=None):
+        T = 0.2
+        batch_size, _ = x.size()
+        x_abs = x.norm(dim=1)
+        x_aug_abs = x_aug.norm(dim=1)
 
-    T = 0.2
-    batch_size, _ = x.size()
-    x_abs = x.norm(dim=1)
-    x_aug_abs = x_aug.norm(dim=1)
+        # 計算相似度矩陣
+        sim_matrix = torch.einsum('ik,jk->ij', x, x_aug) / torch.einsum('i,j->ij', x_abs, x_aug_abs)
+        sim_matrix = torch.exp(sim_matrix / T)
+        
+        self_pos = sim_matrix[range(batch_size), range(batch_size)]  # 自己和自己經過增強的正樣本相似度
 
-    sim_matrix = torch.einsum('ik,jk->ij', x, x_aug) / torch.einsum('i,j->ij', x_abs, x_aug_abs)
-    sim_matrix = torch.exp(sim_matrix / T)
-    self_pos = sim_matrix[range(batch_size), range(batch_size)]
+        # 根據labels確定正負樣本對
+        labels = labels.view(-1, 1)  # 將標籤轉換為 (batch_size, 1) 方便比較
+        pos_mask = labels.eq(labels.T)  # 創建正樣本對應矩陣
+        neg_mask = ~pos_mask  # 創建負樣本對應矩陣
 
-    # # modified:all pos and all neg cal
-    # labels = labels.view(-1, 1)  # 轉換為 (batch_size, 1) 方便比較
-    # pos_mask = labels.eq(labels.T)  # 創建相同類別的對應矩陣
+        # 隨機選擇一個負樣本，從所有負樣本中選擇一個
+        neg_indices = torch.where(neg_mask.sum(dim=1) > 0)[0]  # 找到有負樣本的樣本索引
+        random_neg_indices = neg_indices[torch.randint(0, neg_indices.size(0), (1,))]  # 隨機選擇負樣本
 
-    # # 選擇 positive pairs（不一定是對角線）
-    # pos_sim = sim_matrix * pos_mask  # 只保留相同類別的相似度值
-    # pos_sim_sum = pos_sim.sum(dim=1)
-    # # pos_sim_sum = pos_sim.sum(dim=1) - torch.diag(pos_sim)  # 排除自己本身
+        # 分子：自己與隨機選擇的負樣本（negative pair）
+        random_neg_sim = sim_matrix[range(batch_size), random_neg_indices]  # 自己和隨機選擇的負樣本之間的相似度
 
-    # neg_sim_sum = sim_matrix.sum(dim=1) - pos_sim_sum  # 所有樣本總和 - 正樣本總和
+        # 第二版本分母：扣掉 False negative
+        # 計算 False negative（錯誤識別為負樣本的正樣本）
+        # 分母：扣掉已經選擇的負樣本
+        neg_sim = sim_matrix.sum(dim=1) - self_pos  # 所有負樣本的相似度總和，扣除自己和自己之間的相似度
+        neg_sim = neg_sim - random_neg_sim  # 扣除選定的負樣本
 
-    # loss = pos_sim_sum / neg_sim_sum
-    # loss = -torch.log(loss + 1e-8).mean()  # 避免 log(0)
-    # pos_sim_ = pos_sim_sum.mean()
-    # neg_sim_ = neg_sim_sum.mean()
+        false_neg = sim_matrix * pos_mask  #  False negative
+        neg_sim_true = neg_sim - false_neg.sum(dim=1)  # 扣掉錯誤的負樣本相似度
 
+        loss = random_neg_sim / neg_sim_true
+        loss = -torch.log(loss + 1e-8).mean()  # 避免 log(0)
 
-    # modified: self -> positive; negative:take away all cheated
-    labels = labels.view(-1, 1)
-    pos_mask = labels.eq(labels.T)
+        pos_sim_ = self_pos.mean()
+        neg_sim_ = neg_sim_true.mean()  # 第二版本的平均負樣本相似度
 
-    # cal negative cheated (take away the real positive)
-    pos_sim = sim_matrix * pos_mask
-    pos_sim_sum = pos_sim.sum(dim=1)
-    neg_sim_sum = sim_matrix.sum(dim=1) - pos_sim_sum
-
-    loss = self_pos / neg_sim_sum
-    loss = -torch.log(loss + 1e-8).mean()  # 避免 log(0)
-    pos_sim_ = self_pos.mean()
-    neg_sim_ = neg_sim_sum.mean()
-
+        return loss, pos_sim_, neg_sim_
     
-    # original code:
-    # # pos_sim = sim_matrix[range(batch_size), range(batch_size)]
-    # neg_sim = (sim_matrix.sum(dim=1) - pos_sim)
-    # loss = self_pos / neg_sim
-    # loss = - torch.log(loss).mean()
-    # pos_sim_ = pos_sim.mean()
-    # neg_sim_ = neg_sim.mean()
+    def loss_cal_single_other_neg_rm_FN(self, x, x_aug, labels=None):
+        device = x.device
+        T = 0.2
+        batch_size, _ = x.size()
+        x_abs = x.norm(dim=1)
+        x_aug_abs = x_aug.norm(dim=1)
 
-    return loss, pos_sim_, neg_sim_
+        sim_matrix = torch.einsum('ik,jk->ij', x, x_aug) / torch.einsum('i,j->ij', x_abs, x_aug_abs)
+        sim_matrix = torch.exp(sim_matrix / T)
+        
+        self_pos = sim_matrix[range(batch_size), range(batch_size)]  # 自己與自己之間的相似度
 
-  def loss_cal_normal(self, x, x_aug, labels=None):
+        # 根據 labels 確定正負樣本對
+        labels = labels.view(-1, 1)  # 將標籤轉換為 (batch_size, 1) 方便比較
+        pos_mask = labels.eq(labels.T)  # 創建正樣本對應矩陣
+        neg_mask = ~pos_mask  # 創建負樣本對應矩陣
 
-    T = 0.2
-    batch_size, _ = x.size()
-    x_abs = x.norm(dim=1)
-    x_aug_abs = x_aug.norm(dim=1)
+        random_neg_sim = torch.zeros(batch_size).to(device)  # 用來存儲每個樣本的正樣本相似度
 
-    sim_matrix = torch.einsum('ik,jk->ij', x, x_aug) / torch.einsum('i,j->ij', x_abs, x_aug_abs)
-    sim_matrix = torch.exp(sim_matrix / T)
-    self_pos = sim_matrix[range(batch_size), range(batch_size)]
+        for i in range(batch_size):
+            # 找到對應的正樣本索引
+            neg_indices = torch.where(neg_mask[i] == 1)[0]  # 這一行找出樣本 i 的正樣本
+            random_neg_index = neg_indices[torch.randint(0, neg_indices.size(0), (1,))]  # 隨機選擇一個正樣本
+            random_neg_sim[i] = sim_matrix[i, random_neg_index]  # 計算與隨機選擇的正樣本的相似度
 
-    neg_sim = (sim_matrix.sum(dim=1) - self_pos)
-    loss = self_pos / neg_sim
-    loss = - torch.log(loss + 1e-8).mean()
-    pos_sim_ = self_pos.mean()
-    neg_sim_ = neg_sim.mean()
+        # 分母：扣掉已經選擇的負樣本
+        neg_sim = sim_matrix.sum(dim=1) - self_pos  # 所有負樣本的相似度總和，扣除自己和自己之間的相似度
+        for i in range(batch_size):
+            neg_sim[i] -= random_neg_sim[i]  # 每行減去隨機選擇的正樣本的相似度
+            
+        false_neg = sim_matrix * pos_mask  #  False negative
+        neg_sim_true = neg_sim - false_neg.sum(dim=1)  # 扣掉錯誤的負樣本相似度
 
-    return loss, pos_sim_, neg_sim_
+        loss = random_neg_sim / neg_sim_true
+        loss = -torch.log(loss + 1e-8).mean()  # 避免 log(0)
+
+        pos_sim_ = self_pos.mean()
+        neg_sim_ = neg_sim_true.mean()  # 第二版本的平均負樣本相似度
+
+        return loss, pos_sim_, neg_sim_
 
 
-  def loss_cal_rm_FN_only(self, x, x_aug, labels=None):
+    def loss_cal_single_other_pos(self, x, x_aug, labels=None):
+        device = x.device
+        T = 0.2
+        batch_size, _ = x.size()
+        x_abs = x.norm(dim=1)
+        x_aug_abs = x_aug.norm(dim=1)
 
-    T = 0.2
-    batch_size, _ = x.size()
-    x_abs = x.norm(dim=1)
-    x_aug_abs = x_aug.norm(dim=1)
+        sim_matrix = torch.einsum('ik,jk->ij', x, x_aug) / torch.einsum('i,j->ij', x_abs, x_aug_abs)
+        sim_matrix = torch.exp(sim_matrix / T)
+        
+        self_pos = sim_matrix[range(batch_size), range(batch_size)]  # 自己與自己之間的相似度
 
-    sim_matrix = torch.einsum('ik,jk->ij', x, x_aug) / torch.einsum('i,j->ij', x_abs, x_aug_abs)
-    sim_matrix = torch.exp(sim_matrix / T)
-    self_pos = sim_matrix[range(batch_size), range(batch_size)]
+        # 根據 labels 確定正負樣本對
+        labels = labels.view(-1, 1)  # 將標籤轉換為 (batch_size, 1) 方便比較
+        pos_mask = labels.eq(labels.T)  # 創建正樣本對應矩陣
+        neg_mask = ~pos_mask  # 創建負樣本對應矩陣
 
-    # modified: self -> positive; negative:take away all cheated
-    labels = labels.view(-1, 1)
-    pos_mask = labels.eq(labels.T)
+        random_pos_sim = torch.zeros(batch_size).to(device)  # 用來存儲每個樣本的正樣本相似度
 
-    # cal negative cheated (take away the real positive)
-    pos_sim = sim_matrix * pos_mask
-    pos_sim_sum = pos_sim.sum(dim=1)
-    neg_sim_sum = sim_matrix.sum(dim=1) - pos_sim_sum
+        for i in range(batch_size):
+            # 找到對應的正樣本索引
+            pos_indices = torch.where(pos_mask[i] == 1)[0]  # 這一行找出樣本 i 的正樣本
+            random_pos_index = pos_indices[torch.randint(0, pos_indices.size(0), (1,))]  # 隨機選擇一個正樣本
+            random_pos_sim[i] = sim_matrix[i, random_pos_index]  # 計算與隨機選擇的正樣本的相似度
 
-    loss = self_pos / neg_sim_sum
-    loss = -torch.log(loss + 1e-8).mean()  # avoid log(0)
-    pos_sim_ = self_pos.mean()
-    neg_sim_ = neg_sim_sum.mean()
+        # 分母：扣掉已經選擇的負樣本
+        neg_sim = sim_matrix.sum(dim=1) - self_pos  # 所有負樣本的相似度總和，扣除自己和自己之間的相似度
+        for i in range(batch_size):
+            neg_sim[i] -= random_pos_sim[i]  # 每行減去隨機選擇的正樣本的相似度
+            
+        # 損失計算：分子是隨機選擇的負樣本的相似度，分母是其餘負樣本的相似度總和
+        loss = random_pos_sim.to(device) / neg_sim.to(device)
+        loss = -torch.log(loss + 1e-8).mean()  # 避免log(0)
 
-    return loss, pos_sim_, neg_sim_
-  
-  def loss_cal_cheated(self, x, x_aug, labels=None):
+        pos_sim_ = self_pos.mean()
+        neg_sim_ = neg_sim.mean()
+        
+        return loss, pos_sim_, neg_sim_
 
-    T = 0.2
-    batch_size, _ = x.size()
-    x_abs = x.norm(dim=1)
-    x_aug_abs = x_aug.norm(dim=1)
 
-    sim_matrix = torch.einsum('ik,jk->ij', x, x_aug) / torch.einsum('i,j->ij', x_abs, x_aug_abs)
-    sim_matrix = torch.exp(sim_matrix / T)
-    self_pos = sim_matrix[range(batch_size), range(batch_size)]
-
-    # modified:all pos and all neg cal
-    labels = labels.view(-1, 1)  # 轉換為 (batch_size, 1) 方便比較
-    pos_mask = labels.eq(labels.T)  # 創建相同類別的對應矩陣
-
-    # 選擇 positive pairs（不一定是對角線）
-    pos_sim = sim_matrix * pos_mask  # 只保留相同類別的相似度值
-    # pos_sim_sum = pos_sim.sum(dim=1)
-    pos_sim_sum = pos_sim.sum(dim=1) - torch.diag(pos_sim)  # 排除自己本身
-
-    neg_sim_sum = sim_matrix.sum(dim=1) - pos_sim_sum - torch.diag(pos_sim)  # 所有樣本總和 - 正樣本總和
-
-    loss = pos_sim_sum / neg_sim_sum
-    loss = -torch.log(loss + 1e-8).mean()  # 避免 log(0)
-    pos_sim_ = pos_sim_sum.mean() # not self pos
-    # pos_sim_ = self_pos.mean() # self pos
-    neg_sim_ = neg_sim_sum.mean()
-
-    return loss, pos_sim_, neg_sim_
-
-  def loss_cal_rm_FP_only(self, x, x_aug, labels=None):
-
-    T = 0.2
-    batch_size, _ = x.size()
-    x_abs = x.norm(dim=1)
-    x_aug_abs = x_aug.norm(dim=1)
-
-    sim_matrix = torch.einsum('ik,jk->ij', x, x_aug) / torch.einsum('i,j->ij', x_abs, x_aug_abs)
-    sim_matrix = torch.exp(sim_matrix / T)
-    self_pos = sim_matrix[range(batch_size), range(batch_size)]
-
-    # modified:all pos and all neg cal
-    labels = labels.view(-1, 1)  # 轉換為 (batch_size, 1) 方便比較
-    pos_mask = labels.eq(labels.T)  # 創建相同類別的對應矩陣
-
-    # 選擇 positive pairs（不一定是對角線）
-    pos_sim = sim_matrix * pos_mask  # 只保留相同類別的相似度值
-    # pos_sim_sum = pos_sim.sum(dim=1)
-    pos_sim_sum = pos_sim.sum(dim=1) - torch.diag(pos_sim)  # 排除自己本身
-
-    neg_sim_sum = sim_matrix.sum(dim=1) - self_pos  # 所有樣本總和 - 正樣本總和
-
-    loss = pos_sim_sum / neg_sim_sum
-    loss = -torch.log(loss + 1e-8).mean()  # 避免 log(0)
-    pos_sim_ = pos_sim_sum.mean() # not self pos
-    # pos_sim_ = self_pos.mean() # self pos
-    neg_sim_ = neg_sim_sum.mean()
-
-    return loss, pos_sim_, neg_sim_
 
 import random
 def setup_seed(seed):
@@ -408,6 +609,13 @@ if __name__ == '__main__':
                 loss, pos_sim, neg_sim = model.loss_cal_rm_FN_only(x, x_aug, labels)
             elif args.mode == 'rm_FP':
                 loss, pos_sim, neg_sim = model.loss_cal_rm_FP_only(x, x_aug, labels)
+            elif args.mode == 'pull_negative':
+                # loss, pos_sim, neg_sim = model.loss_cal_pull_neg(x, x_aug, labels)
+                loss, pos_sim, neg_sim = model.loss_cal_single_other_neg(x, x_aug, labels)
+            elif args.mode == 'pull_negative_rm_FN':
+                loss, pos_sim, neg_sim = model.loss_cal_pull_neg_rm_FN(x, x_aug, labels)
+            elif args.mode == 'single_other_pos':
+                loss, pos_sim, neg_sim = model.loss_cal_single_other_pos(x, x_aug, labels)
             else:
                raise RuntimeError(f"no mode matching {args.mode}, input should be: normal, cheated, rm_FN")
 
@@ -445,14 +653,11 @@ if __name__ == '__main__':
             writer.add_scalar('Accuracy/test', acc, epoch)
 
     tpe  = ('local' if args.local else '') + ('prior' if args.prior else '')
-    if not os.path.exists("./logs"):
-        os.makedirs("./logs")
-    if not os.path.exists("./logs/GCL"):
-        os.makedirs("./logs/GCL")
-    if not os.path.exists(f"./logs/GCL/{args.DS}"):
-        os.makedirs(f"./logs/GCL/{args.DS}")
 
-    with open((f'./logs/GCL/{args.DS}/{args.DS}_{aug_ratio}_'+str(args.seed)), 'a+') as f:
+    if not os.path.exists(f"./logs/{args.mode}/{args.DS}"):
+        os.makedirs(f"./logs/{args.mode}/{args.DS}")
+
+    with open((f'./logs/{args.mode}/{args.DS}/{args.DS}_{aug_ratio}_'+str(args.seed)), 'a+') as f:
         s1 = json.dumps(stage_finish_epochs)
         s2 = json.dumps(loss_list)
         s3 = json.dumps(accuracies)

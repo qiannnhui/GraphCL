@@ -1,17 +1,25 @@
 #!/bin/bash -ex
 # for DATASET in MUTAG PROTEINS ENZYMES MSRC_21
-for DATASET in DD COLLAB REDDIT-BINARY IMDB-BINARY NCI1
+# CUDA_VISIBLE_DEVICES=0
+for seed in 0 1 2 3 4
 do
-  for mode in normal cheated rm_FN rm_FP
+  for DATASET in COLLAB DD REDDIT-BINARY IMDB-BINARY NCI1
+  # for DATASET in IMDB-BINARY REDDIT-BINARY REDDIT-MULTI-5K
+  # for DATASET in MUTAG
   do
-    for AUG in none dnodes random3
+    for mode in single_other_pos rm_FP rm_FN cheated pull_negative_rm_FN pull_negative
+    # for mode in pull_negative
+    # for mode in single_other_pos
     do
-      # for lr in 1e-2 1e-3 1e-4 1e-5
-      for lr in 1e-3 5e-4 1e-4 1e-5
+      for AUG in none
       do
-        # CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DATASET --lr 0.01 --local --num-gc-layers 5 --aug $AUG --seed $seed --aug_ratio $aug_ratio
-        CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DATASET --lr $lr --local --num-gc-layers 5 --aug $AUG --mode $mode --log_interval 1 --epochs 500
-        # CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DATASET --lr 0.01 --local --num-gc-layers 5 --aug $AUG --seed $seed --aug_ratio $aug_ratio --mode $mode --or_loss
+        # for lr in 1e-2 1e-3 1e-4 1e-5
+        for lr in 1e-2
+        do
+          # CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DATASET --lr 0.01 --local --num-gc-layers 5 --aug $AUG --seed $seed --aug_ratio $aug_ratio
+          CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DATASET --lr $lr --local --num-gc-layers 5 --aug $AUG --mode $mode --log_interval 10 --epochs 30 --seed $seed
+          # CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DATASET --lr 0.01 --local --num-gc-layers 5 --aug $AUG --seed $seed --aug_ratio $aug_ratio --mode $mode --or_loss
+        done
       done
     done
   done
