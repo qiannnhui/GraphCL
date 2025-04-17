@@ -613,7 +613,8 @@ if __name__ == '__main__':
                 # loss, pos_sim, neg_sim = model.loss_cal_pull_neg(x, x_aug, labels)
                 loss, pos_sim, neg_sim = model.loss_cal_single_other_neg(x, x_aug, labels)
             elif args.mode == 'pull_negative_rm_FN':
-                loss, pos_sim, neg_sim = model.loss_cal_pull_neg_rm_FN(x, x_aug, labels)
+                # loss, pos_sim, neg_sim = model.loss_cal_pull_neg_rm_FN(x, x_aug, labels)
+                loss, pos_sim, neg_sim = model.loss_cal_single_other_neg_rm_FN(x, x_aug, labels)
             elif args.mode == 'single_other_pos':
                 loss, pos_sim, neg_sim = model.loss_cal_single_other_pos(x, x_aug, labels)
             else:

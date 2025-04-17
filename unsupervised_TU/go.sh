@@ -1,14 +1,20 @@
 #!/bin/bash -ex
 # for DATASET in MUTAG PROTEINS ENZYMES MSRC_21
 # CUDA_VISIBLE_DEVICES=0
-for seed in 0 1 2 3 4
+for seed in 3
 do
-  for DATASET in COLLAB DD REDDIT-BINARY IMDB-BINARY NCI1
+  # for DATASET in COLLAB DD REDDIT-BINARY IMDB-BINARY NCI1 #195:1
+  # for DATASET in MUTAG ENZYMES MSRC-21 REDDIT-MULTI-5K NCI1 #249:1
+  # for DATASET in MSRC_21 REDDIT-BINARY DD IMDB-BINARY NCI1 #249:1
+  # for DATASET in NCI1
+  for DATASET in REDDIT-MULTI-5K
+  # for DATASET in PROTEINS REDDIT-MULTI-5K NCI1 # 249:0
   # for DATASET in IMDB-BINARY REDDIT-BINARY REDDIT-MULTI-5K
   # for DATASET in MUTAG
   do
-    for mode in single_other_pos rm_FP rm_FN cheated pull_negative_rm_FN pull_negative
-    # for mode in pull_negative
+    # for mode in single_other_pos rm_FP rm_FN cheated pull_negative_rm_FN pull_negative
+    # for mode in rm_FP
+    for mode in pull_negative
     # for mode in single_other_pos
     do
       for AUG in none

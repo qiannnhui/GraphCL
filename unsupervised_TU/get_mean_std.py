@@ -1,14 +1,15 @@
 import numpy as np
 
 # 假設你的檔案名是文件夾中的 txt 檔案
-DS = "REDDIT-BINARY"
-# mode = "pull_negative_rm_FN"
+DS = "REDDIT-MULTI-5K"
 # mode = "rm_FN"
 # mode = "cheated"
 mode = "pull_negative"
 # mode = "single_other_pos"
+# mode = "rm_FP"
+# mode = "pull_negative_rm_FN"
 aug_ratio = 0.1
-file_path = f"logs/old/{mode}/{DS}"
+file_path = f"logs/{mode}/{DS}"
 file_paths = []
 for i in range(5):
     file_paths.append(f"{file_path}/{DS}_{aug_ratio}_{i}")
