@@ -14,7 +14,7 @@ def arg_parse():
             help='Learning rate.')
     parser.add_argument('--num-gc-layers', dest='num_gc_layers', type=int, default=5,
             help='Number of graph convolution layers before each pooling')
-    parser.add_argument('--hidden-dim', dest='hidden_dim', type=int, default=32,
+    parser.add_argument('--hidden-dim', dest='hidden_dim', type=int, default=64,
             help='')
     parser.add_argument('--batch-size', dest='batch_size', type=int, default=128,
             help='Batch size')
@@ -26,7 +26,8 @@ def arg_parse():
     parser.add_argument('--aug', type=str, default='dnodes')
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--or_loss', action='store_true', help='Set or_loss to True if this flag is present')
-    parser.add_argument('--path', type=str, default='/disk_194b/GCL_datasets/data')
+    parser.add_argument('--path', type=str, default='/home/qiannnhui/data/data')
+#     parser.add_argument('--path', type=str, default='/disk_194b/GCL_datasets/data')
     parser.add_argument('--aug_ratio', dest='aug_ratio', type=int, default=1,
             help='Dropout rate of data augmentation, will be multiplied by 0.1')
 

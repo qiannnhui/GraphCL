@@ -205,7 +205,8 @@ if __name__ == '__main__':
     accuracies['val'].append(acc_val)
     accuracies['test'].append(acc)
     """
-
+    
+    best_acc_val = 0
     for epoch in range(1, epochs+1):
         loss_all = 0
         model.train()
@@ -264,6 +265,12 @@ if __name__ == '__main__':
             acc_val, acc = evaluate_embedding(emb, y)
             accuracies['val'].append(acc_val)
             accuracies['test'].append(acc)
+
+            if acc_val > best_acc_val:
+                best_acc_val = acc_val
+                print(f"Epoch {epoch}: new best val accuracy: {best_acc_val:.4f}, saving model...")
+                torch.save(model.state_dict(), f'./logs/ckpt/{args.DS}/best_model_{aug_ratio}_{args.seed}.pth')
+
             
 
     tpe  = ('local' if args.local else '') + ('prior' if args.prior else '')
