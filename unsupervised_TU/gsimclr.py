@@ -611,11 +611,11 @@ if __name__ == '__main__':
         if epoch % log_interval == 0:
             model.eval()
             emb, y = model.encoder.get_embeddings(dataloader_eval)
-            visualize_embeddings(emb, y, args, epoch, method="t-SNE")
+            # visualize_embeddings(emb, y, args, epoch, method="t-SNE")
             acc_val, acc = evaluate_embedding(emb, y)
-            singular_values = check_dimensional_collapse(emb)
-            for i, value in enumerate(singular_values):
-                writer.add_scalar(f'Singular_Values/{epoch}_{args.DS}', np.log10(value), i)
+            # singular_values = check_dimensional_collapse(emb)
+            # for i, value in enumerate(singular_values):
+            #     writer.add_scalar(f'Singular_Values/{epoch}_{args.DS}', np.log10(value), i)
 
             accuracies['val'].append(acc_val)
             accuracies['test'].append(acc)
