@@ -166,6 +166,140 @@ class simclr(nn.Module):
         plot_similarity_distribution(sim_matrix=sim_matrix, pos_mask=pos_mask, neg_mask=neg_mask, args=args, epoch=epoch)
         # print("cm = ", cm)
 
+
+  def plot_theta_l2(self, x, x_aug, labels, args=None, epoch=None, similarity_measure="cosine"):
+        """
+        accumulate theta and l2 norm data for plotting
+        """
+        pos_mask, neg_mask = self.create_pos_and_neg_mask(labels=labels)
+
+        # ==== 計算 cosine similarity matrix ====
+        x_norm = x / x.norm(dim=1, keepdim=True)
+        x_aug_norm = x_aug / x_aug.norm(dim=1, keepdim=True)
+        cos_sim_matrix = torch.einsum('ik,jk->ij', x_norm, x_aug_norm)  # (B, B)
+
+        # ==== theta (夾角) ====
+        theta_matrix = torch.acos(torch.clamp(cos_sim_matrix, -1.0 + 1e-7, 1.0 - 1e-7))
+
+        # ==== l2 norm matrix ====
+        x_sq = (x ** 2).sum(dim=1, keepdim=True)  # (B, 1)
+        x_aug_sq = (x_aug ** 2).sum(dim=1, keepdim=True).T  # (1, B)
+        l2_matrix = torch.sqrt(x_sq + x_aug_sq - 2 * torch.einsum('ik,jk->ij', x, x_aug) + 1e-8)
+
+        # ==== 去掉對角線 ====
+        B = x.size(0)
+        eye_mask = ~torch.eye(B, dtype=torch.bool, device=x.device)
+        pos_mask = pos_mask & eye_mask
+        neg_mask = neg_mask & eye_mask
+
+        # ==== 擷取資料 ====
+        pos_theta = theta_matrix[pos_mask]
+        pos_l2 = l2_matrix[pos_mask]
+
+        neg_theta = theta_matrix[neg_mask]
+        neg_l2 = l2_matrix[neg_mask]
+
+        # ==== Accumulate data ====
+        if not hasattr(self, 'all_pos_l2'):
+            self.all_pos_l2, self.all_pos_theta = [], []
+            self.all_neg_l2, self.all_neg_theta = [], []
+            self.all_pos_cos, self.all_neg_cos = [], []
+
+        self.all_pos_l2.append(pos_l2.detach().cpu().numpy())
+        self.all_pos_theta.append(pos_theta.detach().cpu().numpy())
+        self.all_neg_l2.append(neg_l2.detach().cpu().numpy())
+        self.all_neg_theta.append(neg_theta.detach().cpu().numpy())
+        self.all_pos_cos.append(cos_sim_matrix[pos_mask].detach().cpu().numpy())
+        self.all_neg_cos.append(cos_sim_matrix[neg_mask].detach().cpu().numpy())
+
+
+  def plot_theta_l2_epoch(self, args=None, epoch=None, similarity_measure="cosine"):
+        """
+        Plot theta vs l2 norm for all accumulated data
+        """
+        # ==== 將所有資料合併 ====
+        pos_l2 = np.concatenate(self.all_pos_l2)
+        pos_theta = np.concatenate(self.all_pos_theta)
+        neg_l2 = np.concatenate(self.all_neg_l2)
+        neg_theta = np.concatenate(self.all_neg_theta)
+        pos_cos = np.concatenate(self.all_pos_cos)
+        neg_cos = np.concatenate(self.all_neg_cos)
+
+        # ==== 計算平均值 ====
+        pos_avg_cos = pos_cos.mean()
+        pos_avg_theta = pos_theta.mean()
+        pos_avg_l2 = pos_l2.mean()
+
+        neg_avg_cos = neg_cos.mean()
+        neg_avg_theta = neg_theta.mean()
+        neg_avg_l2 = neg_l2.mean()
+
+        result = {
+            'pos_avg_cos': pos_avg_cos,
+            'pos_avg_theta': pos_avg_theta,
+            'pos_avg_l2': pos_avg_l2,
+            'neg_avg_cos': neg_avg_cos,
+            'neg_avg_theta': neg_avg_theta,
+            'neg_avg_l2': neg_avg_l2
+        }
+
+        # ==== Plotting ====
+        import matplotlib.pyplot as plt
+        plt.figure(figsize=(24, 18))
+        plt.scatter(pos_l2, pos_theta, color='green', label='Positive Pairs', alpha=0.6)
+        plt.scatter(neg_l2, neg_theta, color='red', label='Negative Pairs', alpha=0.6)
+
+        # Add average values as text annotations
+        pos_avg_text = f"Pos Avg: θ={result['pos_avg_theta']:.4f} rad, L2={result['pos_avg_l2']:.4f}"
+        neg_avg_text = f"Neg Avg: θ={result['neg_avg_theta']:.4f} rad, L2={result['neg_avg_l2']:.4f}"
+        plt.text(0.05, 0.95, pos_avg_text, transform=plt.gca().transAxes, color='green', fontsize=10, verticalalignment='top')
+        plt.text(0.05, 0.90, neg_avg_text, transform=plt.gca().transAxes, color='red', fontsize=10, verticalalignment='top')
+
+        plt.xlabel('L2 Norm')
+        plt.ylabel('Theta (radians)')
+        plt.title(f'Theta vs L2 Norm with {similarity_measure} (Epoch {epoch})')
+        plt.legend()
+        plt.grid(True)
+        os.makedirs(f'./logs/theta_vs_l2/{args.DS}/lr_{args.lr}/{similarity_measure}', exist_ok=True)
+        plt.savefig(f'./logs/theta_vs_l2/{args.DS}/lr_{args.lr}/{similarity_measure}/epoch_{epoch}_theta_vs_l2_{args.aug}_{args.mode}.png')
+
+        return result
+
+  def _get_similarity_matrix(self, x, x_aug, similarity_measure="cosine", T=0.2):
+        
+        x_abs = x.norm(dim=1)
+        x_aug_abs = x_aug.norm(dim=1)
+
+        if similarity_measure == "cosine":
+            # Cosine similarity
+            cos_sim_matrix = torch.einsum('ik,jk->ij', x, x_aug) / torch.einsum('i,j->ij', x_abs, x_aug_abs)
+            cos_sim_matrix = torch.clamp(cos_sim_matrix, -1.0, 1.0)  # Clamp to avoid invalid values
+            sim_matrix = torch.exp(cos_sim_matrix / T)
+
+        elif similarity_measure == "l2":
+            # L2 norm similarity
+            l2_matrix = torch.cdist(x, x_aug, p=2)  # Pairwise L2 distance
+            l2_matrix = l2_matrix / l2_matrix.max()  # Normalize L2 norm to [0, 1]
+            sim_matrix = torch.exp(-l2_matrix / T)  # Convert distance to similarity
+
+        elif similarity_measure == "cosine+l2":
+            # Compute cosine similarity
+            cos_sim_matrix = torch.einsum('ik,jk->ij', x, x_aug) / torch.einsum('i,j->ij', x_abs, x_aug_abs)
+            cos_sim_matrix = torch.clamp(cos_sim_matrix, -1.0, 1.0)  # Clamp to avoid invalid values
+
+            # Compute L2 norm
+            l2_matrix = torch.cdist(x, x_aug, p=2)  # Pairwise L2 distance
+            l2_matrix = l2_matrix / l2_matrix.max()  # Normalize L2 norm to [0, 1]
+
+            # Combine cosine similarity and L2 norm
+            combined_matrix = cos_sim_matrix - l2_matrix  # Example: subtract L2 norm from cosine similarity
+            sim_matrix = torch.exp(combined_matrix / T)  # Convert to similarity
+
+        else:
+            raise ValueError(f"Unsupported similarity measure: {similarity_measure}")
+        
+        return sim_matrix
+
   def loss_cal(self, x, x_aug, labels, get_cm=False, epoch=None):
 
     T = 0.2
@@ -249,15 +383,11 @@ class simclr(nn.Module):
     return loss, pos_sim_, neg_sim_
   
 
-  def loss_cal_cheated(self, x, x_aug, labels=None, get_cm=False, epoch=None):
+  def loss_cal_cheated(self, x, x_aug, labels=None, get_cm=False, epoch=None, similarity_measure="cosine"):
 
     T = 0.2
     batch_size, _ = x.size()
-    x_abs = x.norm(dim=1)
-    x_aug_abs = x_aug.norm(dim=1)
-
-    cos_sim_matrix = torch.einsum('ik,jk->ij', x, x_aug) / torch.einsum('i,j->ij', x_abs, x_aug_abs)
-    sim_matrix = torch.exp(cos_sim_matrix / T)
+    sim_matrix = self._get_similarity_matrix(x=x, x_aug=x_aug, similarity_measure=similarity_measure, T=T)
     self_pos = sim_matrix[range(batch_size), range(batch_size)]
 
     # modified:all pos and all neg cal
@@ -332,7 +462,7 @@ if __name__ == '__main__':
     setup_seed(args.seed)
 
     # tensorboard
-    writer = SummaryWriter(log_dir=f'logs/500epochs_log_interval_10/{args.DS}_{args.lr}/tensorboard_{args.aug}_{args.mode}_{time.ctime(time.time())}_{args.or_loss}')
+    writer = SummaryWriter(log_dir=f'logs/500epochs_log_interval_10/{args.DS}/lr_{args.lr}/tensorboard_{args.similarity_measure}_{args.aug}_{args.mode}_{time.ctime(time.time())}_{args.or_loss}')
 
     accuracies = {'val':[], 'test':[]}
     epochs = args.epochs
@@ -387,7 +517,10 @@ if __name__ == '__main__':
         neg_sim_all = 0
         model.train()
         # labels = torch.empty(0, dtype=torch.long, device=device)
-        for data in dataloader:
+        # for data in dataloader:
+        for batch_idx, data in enumerate(dataloader):
+            first_batch = (batch_idx == 0)
+            last_batch = (batch_idx == len(dataloader) - 1)
 
             data, data_aug = data
             # labels = torch.cat([labels, data.y.to(device)], dim=0)
@@ -432,7 +565,7 @@ if __name__ == '__main__':
                 loss, pos_sim, neg_sim = model.loss_cal_normal(x, x_aug, labels=labels, get_cm=False, epoch=epoch)
             elif args.mode == 'cheated':
                 # loss, pos_sim, neg_sim = model.loss_cal_cheated(x, x_aug, labels, get_cm=True if epoch % log_interval == 0 else False, epoch=epoch)
-                loss, pos_sim, neg_sim = model.loss_cal_cheated(x, x_aug, labels, get_cm=False, epoch=epoch)
+                loss, pos_sim, neg_sim = model.loss_cal_cheated(x, x_aug, labels, get_cm=False, epoch=epoch, similarity_measure=args.similarity_measure)
             elif args.mode == 'rm_FN':
                 # loss, pos_sim, neg_sim = model.loss_cal_rm_FN_only(x, x_aug, labels, get_cm=True if epoch % log_interval == 0 else False, epoch=epoch)
                 loss, pos_sim, neg_sim = model.loss_cal_rm_FN_only(x, x_aug, labels, get_cm=False, epoch=epoch)
@@ -441,7 +574,21 @@ if __name__ == '__main__':
                 loss, pos_sim, neg_sim = model.loss_cal_rm_FP_only(x, x_aug, labels, get_cm=False, epoch=epoch)
             else:
                raise RuntimeError(f"no mode matching {args.mode}, input should be: normal, cheated, rm_FN")
-
+            
+            # scatter plot for theta and l2 norm
+            if args.plot_theta_l2 and epoch % 50 == 0:
+                if first_batch and hasattr(model, 'all_pos_l2'):
+                    del model.all_pos_l2, model.all_pos_theta, model.all_neg_l2, model.all_neg_theta, model.all_pos_cos, model.all_neg_cos
+                model.plot_theta_l2(x, x_aug, labels, args=args, epoch=epoch, similarity_measure=args.similarity_measure)
+                if last_batch:
+                    # tensorboard
+                    result = model.plot_theta_l2_epoch(args=args, epoch=epoch, similarity_measure=args.similarity_measure)
+                    writer.add_scalar('Theta/pos_avg_cos', result['pos_avg_cos'], epoch)
+                    writer.add_scalar('Theta/pos_avg_theta', result['pos_avg_theta'], epoch)
+                    writer.add_scalar('Theta/pos_avg_l2', result['pos_avg_l2'], epoch)
+                    writer.add_scalar('Theta/neg_avg_cos', result['neg_avg_cos'], epoch)
+                    writer.add_scalar('Theta/neg_avg_theta', result['neg_avg_theta'], epoch)
+                    writer.add_scalar('Theta/neg_avg_l2', result['neg_avg_l2'], epoch)
             # print(x)
             # print(x_aug)
             oloss = odecay * l2_reg_ortho(model)
@@ -458,7 +605,7 @@ if __name__ == '__main__':
         writer.add_scalar('Similarity/neg_sim', neg_sim_all / len(dataloader), epoch)
 
         print('Epoch {}, Loss {}'.format(epoch, loss_all / len(dataloader.dataset)))
-        print("pos sim = ", pos_sim_all, "; neg sim = ", neg_sim_all)
+        # print("pos sim = ", pos_sim_all, "; neg sim = ", neg_sim_all)
         loss_list.append(loss_all / len(dataloader.dataset))
         if epoch % log_interval == 0:
             model.eval()

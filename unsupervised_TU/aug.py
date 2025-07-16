@@ -58,7 +58,7 @@ class TUDataset_aug(InMemoryDataset):
             contain only non-isomorphic graphs. (default: :obj:`False`)
     """
 
-    url = ('http://ls11-www.cs.tu-dortmund.de/people/morris/'
+    url = ('https://www.chrsmrrs.com/'
            'graphkerneldatasets')
     cleaned_url = ('https://raw.githubusercontent.com/nd7141/'
                    'graph_datasets/master/datasets')
@@ -211,6 +211,8 @@ class TUDataset_aug(InMemoryDataset):
             data.num_nodes = self.data.__num_nodes__[idx]
 
         for key in self.data.keys():
+            if key == 'num_nodes':
+                continue
             item, slices = self.data[key], self.slices[key]
             if torch.is_tensor(item):
                 s = list(repeat(slice(None), item.dim()))
