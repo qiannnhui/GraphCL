@@ -187,11 +187,10 @@ class simclr(nn.Module):
         x_aug_sq = (x_aug ** 2).sum(dim=1, keepdim=True).T  # (1, B)
         l2_matrix = torch.sqrt(x_sq + x_aug_sq - 2 * torch.einsum('ik,jk->ij', x, x_aug) + 1e-8)
 
-        # ==== 去掉對角線 ====
-        B = x.size(0)
-        eye_mask = ~torch.eye(B, dtype=torch.bool, device=x.device)
-        pos_mask = pos_mask & eye_mask
-        neg_mask = neg_mask & eye_mask
+        # ==== Use only the upper triangular part ====
+        upper_tri_mask = torch.triu(torch.ones_like(cos_sim_matrix), diagonal=1).bool()  # Exclude diagonal
+        pos_mask = pos_mask & upper_tri_mask
+        neg_mask = neg_mask & upper_tri_mask
 
         # ==== 擷取資料 ====
         pos_theta = theta_matrix_deg[pos_mask]
@@ -246,23 +245,49 @@ class simclr(nn.Module):
 
         # ==== Plotting ====
         import matplotlib.pyplot as plt
-        plt.figure(figsize=(24, 18))
+        fontsize = 40
+        plt.figure(figsize=(100, 25))
+        plt.axis('equal')  # Set equal scaling for both axes
+
+        # Plot for Positive Pairs
+        plt.subplot(131)  # (1 row, 3 columns, 1st plot)
+        plt.scatter(pos_l2, pos_theta, color='green', label='Positive Pairs', alpha=0.6)
+        plt.xlabel('L2 Norm', fontsize=fontsize)
+        plt.ylabel('Theta (degrees)', fontsize=fontsize)
+        plt.xticks(fontsize=fontsize)
+        plt.yticks(fontsize=fontsize)
+        plt.title(f'Positive Pairs (Epoch {epoch})', fontsize=fontsize)
+        plt.grid(True)
+        plt.legend(fontsize=fontsize)
+
+        # Plot for Negative Pairs
+        plt.subplot(132)  # (1 row, 3 columns, 2nd plot)
+        plt.scatter(neg_l2, neg_theta, color='red', label='Negative Pairs', alpha=0.6)
+        plt.xlabel('L2 Norm', fontsize=fontsize)
+        plt.ylabel('Theta (degrees)', fontsize=fontsize)
+        plt.xticks(fontsize=fontsize)
+        plt.yticks(fontsize=fontsize)
+        plt.title(f'Negative Pairs (Epoch {epoch})', fontsize=fontsize)
+        plt.grid(True)
+        plt.legend(fontsize=fontsize)
+
+        # Plot for Both Positive & Negative Pairs
+        plt.subplot(133)  # (1 row, 3 columns, 3rd plot)
         plt.scatter(pos_l2, pos_theta, color='green', label='Positive Pairs', alpha=0.6)
         plt.scatter(neg_l2, neg_theta, color='red', label='Negative Pairs', alpha=0.6)
-
-        # Add average values as text annotations
-        pos_avg_text = f"Pos Avg: θ={result['pos_avg_theta']:.4f} rad, L2={result['pos_avg_l2']:.4f}"
-        neg_avg_text = f"Neg Avg: θ={result['neg_avg_theta']:.4f} rad, L2={result['neg_avg_l2']:.4f}"
-        plt.text(0.05, 0.95, pos_avg_text, transform=plt.gca().transAxes, color='green', fontsize=10, verticalalignment='top')
-        plt.text(0.05, 0.90, neg_avg_text, transform=plt.gca().transAxes, color='red', fontsize=10, verticalalignment='top')
-
-        plt.xlabel('L2 Norm')
-        plt.ylabel('Theta (degrees)')
-        plt.title(f'Theta vs L2 Norm with {similarity_measure} (Epoch {epoch})')
-        plt.legend()
+        plt.xlabel('L2 Norm', fontsize=fontsize)
+        plt.ylabel('Theta (degrees)', fontsize=fontsize)
+        plt.xticks(fontsize=fontsize)
+        plt.yticks(fontsize=fontsize)
+        plt.title(f'Theta vs L2 Norm with {similarity_measure} (Epoch {epoch})', fontsize=fontsize)
         plt.grid(True)
+        plt.legend(fontsize=fontsize)
+
+        # Save the figure with all plots
         os.makedirs(f'./logs/theta_vs_l2/{args.DS}/lr_{args.lr}/{similarity_measure}', exist_ok=True)
+        plt.tight_layout()  # Makes sure everything fits without overlap
         plt.savefig(f'./logs/theta_vs_l2/{args.DS}/lr_{args.lr}/{similarity_measure}/epoch_{epoch}_theta_vs_l2_{args.aug}_{args.mode}.png')
+        plt.close()  # Close the figure to free memory
 
         return result
 

@@ -1,20 +1,20 @@
 #!/bin/bash -ex
-# # gpu = 0
-# for DS in PROTEINS DD COLLAB REDDIT-BINARY
-# do
-#     for SIM_MEASURE in l2 cosine cosine+l2
-#     do
-#         CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DS --lr 1e-4 --local --num-gc-layers 5 --aug none --mode cheated --log_interval 10 --epochs 500 --plot_theta_l2 --similarity_measure $SIM_MEASURE
-#     done
-# done
-# gpu = 1
-for DS in MUTAG IMDB-BINARY REDDIT-MULTI-5K NCI1
+# gpu = 0
+for DS in PROTEINS DD REDDIT-BINARY COLLAB
 do
     for SIM_MEASURE in l2 cosine cosine+l2
     do
         CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DS --lr 1e-4 --local --num-gc-layers 5 --aug none --mode cheated --log_interval 10 --epochs 500 --plot_theta_l2 --similarity_measure $SIM_MEASURE
     done
 done
+# # gpu = 1
+# for DS in MUTAG IMDB-BINARY REDDIT-MULTI-5K NCI1
+# do
+#     for SIM_MEASURE in l2 cosine cosine+l2
+#     do
+#         CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DS --lr 1e-4 --local --num-gc-layers 5 --aug none --mode cheated --log_interval 10 --epochs 500 --plot_theta_l2 --similarity_measure $SIM_MEASURE
+#     done
+# done
 
 # for DATASET in PROTEINS
 # for DATASET in MUTAG PROTEINS ENZYMES MSRC_21 DD COLLAB
