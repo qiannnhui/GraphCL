@@ -247,7 +247,7 @@ class simclr(nn.Module):
         import matplotlib.pyplot as plt
         fontsize = 40
         plt.figure(figsize=(100, 25))
-        plt.axis('equal')  # Set equal scaling for both axes
+        # plt.axis('equal')  # Set equal scaling for both axes
 
         # Plot for Positive Pairs
         plt.subplot(131)  # (1 row, 3 columns, 1st plot)
