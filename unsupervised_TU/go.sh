@@ -8,7 +8,7 @@
 #     done
 # done
 # gpu = 1
-for DS in IMDB-BINARY REDDIT-MULTI-5K NCI1 MUTAG
+for DS in MUTAG IMDB-BINARY REDDIT-MULTI-5K NCI1
 do
     for SIM_MEASURE in l2 cosine cosine+l2
     do

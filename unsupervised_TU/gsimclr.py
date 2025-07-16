@@ -180,6 +180,7 @@ class simclr(nn.Module):
 
         # ==== theta (夾角) ====
         theta_matrix = torch.acos(torch.clamp(cos_sim_matrix, -1.0 + 1e-7, 1.0 - 1e-7))
+        theta_matrix_deg = theta_matrix * 180.0 / torch.pi  # 轉換成度
 
         # ==== l2 norm matrix ====
         x_sq = (x ** 2).sum(dim=1, keepdim=True)  # (B, 1)
@@ -193,10 +194,10 @@ class simclr(nn.Module):
         neg_mask = neg_mask & eye_mask
 
         # ==== 擷取資料 ====
-        pos_theta = theta_matrix[pos_mask]
+        pos_theta = theta_matrix_deg[pos_mask]
         pos_l2 = l2_matrix[pos_mask]
 
-        neg_theta = theta_matrix[neg_mask]
+        neg_theta = theta_matrix_deg[neg_mask]
         neg_l2 = l2_matrix[neg_mask]
 
         # ==== Accumulate data ====
@@ -256,7 +257,7 @@ class simclr(nn.Module):
         plt.text(0.05, 0.90, neg_avg_text, transform=plt.gca().transAxes, color='red', fontsize=10, verticalalignment='top')
 
         plt.xlabel('L2 Norm')
-        plt.ylabel('Theta (radians)')
+        plt.ylabel('Theta (degrees)')
         plt.title(f'Theta vs L2 Norm with {similarity_measure} (Epoch {epoch})')
         plt.legend()
         plt.grid(True)
