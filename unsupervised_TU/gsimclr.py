@@ -605,7 +605,7 @@ if __name__ == '__main__':
             if args.plot_theta_l2 and epoch % 50 == 0:
                 if first_batch and hasattr(model, 'all_pos_l2'):
                     del model.all_pos_l2, model.all_pos_theta, model.all_neg_l2, model.all_neg_theta, model.all_pos_cos, model.all_neg_cos
-                model.plot_theta_l2(x, x_aug, labels, args=args, epoch=epoch, similarity_measure=args.similarity_measure)
+                model.plot_theta_l2(x, x_aug, labels)
                 if last_batch:
                     # tensorboard
                     result = model.plot_theta_l2_epoch(args=args, epoch=epoch, similarity_measure=args.similarity_measure)
