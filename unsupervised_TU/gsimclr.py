@@ -167,7 +167,7 @@ class simclr(nn.Module):
         # print("cm = ", cm)
 
 
-  def plot_theta_l2(self, x, x_aug, labels, args=None, epoch=None, similarity_measure="cosine"):
+  def plot_theta_l2(self, x, x_aug, labels):
         """
         accumulate theta and l2 norm data for plotting
         """
