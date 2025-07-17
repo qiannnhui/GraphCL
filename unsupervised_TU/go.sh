@@ -17,7 +17,7 @@ for aug_ratio in 2
 do
   for seed in 0 
   do
-    CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DATASET --lr 0.001 --local --num-gc-layers 5 --aug $AUG --seed $seed --aug_ratio $aug_ratio --epoch 200
+    CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DATASET --lr 0.001 --local --num-gc-layers 5 --aug $AUG --seed $seed --aug_ratio $aug_ratio --epoch 200 --plot_theta_l2
 
   done
 done

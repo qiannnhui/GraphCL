@@ -30,6 +30,7 @@ def arg_parse():
 #     parser.add_argument('--path', type=str, default='/disk_194b/GCL_datasets/data')
     parser.add_argument('--aug_ratio', dest='aug_ratio', type=int, default=1,
             help='Dropout rate of data augmentation, will be multiplied by 0.1')
+    parser.add_argument('--plot_theta_l2', action='store_true', help='Plot theta and l2 norm scatter plot')
 
     return parser.parse_args()
 

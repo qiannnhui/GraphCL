@@ -25,6 +25,7 @@ from losses import *
 from gin import Encoder
 from evaluate_embedding import evaluate_embedding
 from model import *
+from plot_theta_l2_scatter import plot_theta_l2, plot_theta_l2_epoch
 
 from arguments import arg_parse
 from torch_geometric.transforms import Constant
@@ -196,8 +197,8 @@ if __name__ == '__main__':
     print('num_gc_layers: {}'.format(args.num_gc_layers))
     print('================')
 
-    model.eval()
-    emb, y = model.encoder.get_embeddings(dataloader_eval)
+    # model.eval()
+    # emb, y = model.encoder.get_embeddings(dataloader_eval)
     # print(emb.shape, y.shape)
 
     """
@@ -207,9 +208,16 @@ if __name__ == '__main__':
     """
     
     best_acc_val = 0
-    for epoch in range(1, epochs+1):
+    for epoch in range(0, epochs+1):
         loss_all = 0
         model.train()
+
+        if args.plot_theta_l2 and epoch % log_interval == 0:
+            all_pos_l2, all_pos_theta = [], []
+            all_neg_l2, all_neg_theta = [], []
+            all_real_pos_l2, all_real_pos_theta = [], []
+            all_real_neg_l2, all_real_neg_theta = [], []
+
         for data in dataloader:
 
             # print('start')
@@ -256,10 +264,24 @@ if __name__ == '__main__':
             loss_all += loss.item() * data.num_graphs
             loss.backward()
             optimizer.step()
+            if args.plot_theta_l2 and epoch % log_interval == 0:
+                # pos_l2, pos_theta, neg_l2, neg_theta = plot_theta_l2(x_anchor, x_graph_pos)
+                pos_l2, pos_theta, neg_l2, neg_theta, real_pos_l2, real_pos_theta, real_neg_l2, real_neg_theta = plot_theta_l2(x, x_aug, data.y)
+                all_pos_l2.append(pos_l2)
+                all_pos_theta.append(pos_theta)
+                all_neg_l2.append(neg_l2)
+                all_neg_theta.append(neg_theta)
+                all_real_pos_l2.append(real_pos_l2)
+                all_real_pos_theta.append(real_pos_theta)
+                all_real_neg_l2.append(real_neg_l2)
+                all_real_neg_theta.append(real_neg_theta)
         print('Epoch {}, Loss {}'.format(epoch, loss_all / len(dataloader.dataset)))
         loss_list.append(loss_all / len(dataloader.dataset))
 
         if epoch % log_interval == 0:
+            if args.plot_theta_l2:
+                result = plot_theta_l2_epoch(all_pos_l2, all_pos_theta, all_neg_l2, all_neg_theta, all_real_pos_l2,
+                                             all_real_pos_theta, all_real_neg_l2, all_real_neg_theta, args=args, epoch=epoch)
             model.eval()
             emb, y = model.encoder.get_embeddings(dataloader_eval)
             acc_val, acc = evaluate_embedding(emb, y)
@@ -285,5 +307,6 @@ if __name__ == '__main__':
         s1 = json.dumps(stage_finish_epochs)
         s2 = json.dumps(loss_list)
         s3 = json.dumps(accuracies)
-        f.write('{},{},{},{},{},{},{},{}\n'.format(args.DS, args.num_gc_layers, epochs, log_interval, lr, s1, s2, s3))
+        s4 = json.dumps(result) if args.plot_theta_l2 else ''
+        f.write('{},{},{},{},{},{},{},{}\n{}\n'.format(args.DS, args.num_gc_layers, epochs, log_interval, lr, s1, s2, s3, s4))
     
