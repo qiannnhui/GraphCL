@@ -212,7 +212,7 @@ if __name__ == '__main__':
         loss_all = 0
         model.train()
 
-        if args.plot_theta_l2 and epoch % log_interval == 0:
+        if args.plot_theta_l2 and epoch % 50 == 0:
             all_pos_l2, all_pos_theta = [], []
             all_neg_l2, all_neg_theta = [], []
             all_real_pos_l2, all_real_pos_theta = [], []
@@ -264,7 +264,7 @@ if __name__ == '__main__':
             loss_all += loss.item() * data.num_graphs
             loss.backward()
             optimizer.step()
-            if args.plot_theta_l2 and epoch % log_interval == 0:
+            if args.plot_theta_l2 and epoch % 50 == 0:
                 # pos_l2, pos_theta, neg_l2, neg_theta = plot_theta_l2(x_anchor, x_graph_pos)
                 pos_l2, pos_theta, neg_l2, neg_theta, real_pos_l2, real_pos_theta, real_neg_l2, real_neg_theta = plot_theta_l2(x, x_aug, data.y)
                 all_pos_l2.append(pos_l2)
@@ -279,7 +279,7 @@ if __name__ == '__main__':
         loss_list.append(loss_all / len(dataloader.dataset))
 
         if epoch % log_interval == 0:
-            if args.plot_theta_l2:
+            if args.plot_theta_l2 and epoch % 50 == 0:
                 result = plot_theta_l2_epoch(all_pos_l2, all_pos_theta, all_neg_l2, all_neg_theta, all_real_pos_l2,
                                              all_real_pos_theta, all_real_neg_l2, all_real_neg_theta, args=args, epoch=epoch)
             model.eval()
@@ -291,6 +291,7 @@ if __name__ == '__main__':
             if acc_val > best_acc_val:
                 best_acc_val = acc_val
                 print(f"Epoch {epoch}: new best val accuracy: {best_acc_val:.4f}, saving model...")
+                os.makedirs(f'./logs/ckpt/{args.DS}', exist_ok=True)
                 torch.save(model.state_dict(), f'./logs/ckpt/{args.DS}/best_model_{aug_ratio}_{args.seed}.pth')
 
             
@@ -307,6 +308,6 @@ if __name__ == '__main__':
         s1 = json.dumps(stage_finish_epochs)
         s2 = json.dumps(loss_list)
         s3 = json.dumps(accuracies)
-        s4 = json.dumps(result) if args.plot_theta_l2 else ''
-        f.write('{},{},{},{},{},{},{},{}\n{}\n'.format(args.DS, args.num_gc_layers, epochs, log_interval, lr, s1, s2, s3, s4))
+        # s4 = json.dumps(result) if args.plot_theta_l2 else ''
+        f.write('{},{},{},{},{},{},{},{}\n'.format(args.DS, args.num_gc_layers, epochs, log_interval, lr, s1, s2, s3))
     
