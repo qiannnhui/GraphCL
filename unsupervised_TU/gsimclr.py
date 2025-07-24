@@ -34,6 +34,7 @@ import time
 from sklearn.metrics import confusion_matrix
 from plot_similarity import plot_similarity_matrix
 from plot_sim_distribution import plot_similarity_distribution
+from plot_theta_l2_scatter import plot_theta_l2, plot_theta_l2_epoch
 from plot_tsne import visualize_embeddings
 
 class GcnInfomax(nn.Module):
@@ -165,131 +166,6 @@ class simclr(nn.Module):
         # plot_similarity_distribution(sim_matrix=normalized_sim_matrix, pos_mask=pos_mask, file_name=f'sim_distribution_epoch_{epoch}_normalized_{args.aug}_{args.mode}')
         plot_similarity_distribution(sim_matrix=sim_matrix, pos_mask=pos_mask, neg_mask=neg_mask, args=args, epoch=epoch)
         # print("cm = ", cm)
-
-
-  def plot_theta_l2(self, x, x_aug, labels):
-        """
-        accumulate theta and l2 norm data for plotting
-        """
-        pos_mask, neg_mask = self.create_pos_and_neg_mask(labels=labels)
-
-        # ==== 計算 cosine similarity matrix ====
-        x_norm = x / x.norm(dim=1, keepdim=True)
-        x_aug_norm = x_aug / x_aug.norm(dim=1, keepdim=True)
-        cos_sim_matrix = torch.einsum('ik,jk->ij', x_norm, x_aug_norm)  # (B, B)
-
-        # ==== theta (夾角) ====
-        theta_matrix = torch.acos(torch.clamp(cos_sim_matrix, -1.0 + 1e-7, 1.0 - 1e-7))
-        theta_matrix_deg = theta_matrix * 180.0 / torch.pi  # 轉換成度
-
-        # ==== l2 norm matrix ====
-        x_sq = (x ** 2).sum(dim=1, keepdim=True)  # (B, 1)
-        x_aug_sq = (x_aug ** 2).sum(dim=1, keepdim=True).T  # (1, B)
-        l2_matrix = torch.sqrt(x_sq + x_aug_sq - 2 * torch.einsum('ik,jk->ij', x, x_aug) + 1e-8)
-
-        # ==== Use only the upper triangular part ====
-        upper_tri_mask = torch.triu(torch.ones_like(cos_sim_matrix), diagonal=1).bool()  # Exclude diagonal
-        pos_mask = pos_mask & upper_tri_mask
-        neg_mask = neg_mask & upper_tri_mask
-
-        # ==== 擷取資料 ====
-        pos_theta = theta_matrix_deg[pos_mask]
-        pos_l2 = l2_matrix[pos_mask]
-
-        neg_theta = theta_matrix_deg[neg_mask]
-        neg_l2 = l2_matrix[neg_mask]
-
-        # ==== Accumulate data ====
-        if not hasattr(self, 'all_pos_l2'):
-            self.all_pos_l2, self.all_pos_theta = [], []
-            self.all_neg_l2, self.all_neg_theta = [], []
-            self.all_pos_cos, self.all_neg_cos = [], []
-
-        self.all_pos_l2.append(pos_l2.detach().cpu().numpy())
-        self.all_pos_theta.append(pos_theta.detach().cpu().numpy())
-        self.all_neg_l2.append(neg_l2.detach().cpu().numpy())
-        self.all_neg_theta.append(neg_theta.detach().cpu().numpy())
-        self.all_pos_cos.append(cos_sim_matrix[pos_mask].detach().cpu().numpy())
-        self.all_neg_cos.append(cos_sim_matrix[neg_mask].detach().cpu().numpy())
-
-
-  def plot_theta_l2_epoch(self, args=None, epoch=None, similarity_measure="cosine"):
-        """
-        Plot theta vs l2 norm for all accumulated data
-        """
-        # ==== 將所有資料合併 ====
-        pos_l2 = np.concatenate(self.all_pos_l2)
-        pos_theta = np.concatenate(self.all_pos_theta)
-        neg_l2 = np.concatenate(self.all_neg_l2)
-        neg_theta = np.concatenate(self.all_neg_theta)
-        pos_cos = np.concatenate(self.all_pos_cos)
-        neg_cos = np.concatenate(self.all_neg_cos)
-
-        # ==== 計算平均值 ====
-        pos_avg_cos = pos_cos.mean()
-        pos_avg_theta = pos_theta.mean()
-        pos_avg_l2 = pos_l2.mean()
-
-        neg_avg_cos = neg_cos.mean()
-        neg_avg_theta = neg_theta.mean()
-        neg_avg_l2 = neg_l2.mean()
-
-        result = {
-            'pos_avg_cos': pos_avg_cos,
-            'pos_avg_theta': pos_avg_theta,
-            'pos_avg_l2': pos_avg_l2,
-            'neg_avg_cos': neg_avg_cos,
-            'neg_avg_theta': neg_avg_theta,
-            'neg_avg_l2': neg_avg_l2
-        }
-
-        # ==== Plotting ====
-        import matplotlib.pyplot as plt
-        fontsize = 40
-        plt.figure(figsize=(100, 25))
-        # plt.axis('equal')  # Set equal scaling for both axes
-
-        # Plot for Positive Pairs
-        plt.subplot(131)  # (1 row, 3 columns, 1st plot)
-        plt.scatter(pos_l2, pos_theta, color='green', label='Positive Pairs', alpha=0.6)
-        plt.xlabel('L2 Norm', fontsize=fontsize)
-        plt.ylabel('Theta (degrees)', fontsize=fontsize)
-        plt.xticks(fontsize=fontsize)
-        plt.yticks(fontsize=fontsize)
-        plt.title(f'Positive Pairs (Epoch {epoch})', fontsize=fontsize)
-        plt.grid(True)
-        plt.legend(fontsize=fontsize)
-
-        # Plot for Negative Pairs
-        plt.subplot(132)  # (1 row, 3 columns, 2nd plot)
-        plt.scatter(neg_l2, neg_theta, color='red', label='Negative Pairs', alpha=0.6)
-        plt.xlabel('L2 Norm', fontsize=fontsize)
-        plt.ylabel('Theta (degrees)', fontsize=fontsize)
-        plt.xticks(fontsize=fontsize)
-        plt.yticks(fontsize=fontsize)
-        plt.title(f'Negative Pairs (Epoch {epoch})', fontsize=fontsize)
-        plt.grid(True)
-        plt.legend(fontsize=fontsize)
-
-        # Plot for Both Positive & Negative Pairs
-        plt.subplot(133)  # (1 row, 3 columns, 3rd plot)
-        plt.scatter(pos_l2, pos_theta, color='green', label='Positive Pairs', alpha=0.6)
-        plt.scatter(neg_l2, neg_theta, color='red', label='Negative Pairs', alpha=0.6)
-        plt.xlabel('L2 Norm', fontsize=fontsize)
-        plt.ylabel('Theta (degrees)', fontsize=fontsize)
-        plt.xticks(fontsize=fontsize)
-        plt.yticks(fontsize=fontsize)
-        plt.title(f'Theta vs L2 Norm with {similarity_measure} (Epoch {epoch})', fontsize=fontsize)
-        plt.grid(True)
-        plt.legend(fontsize=fontsize)
-
-        # Save the figure with all plots
-        os.makedirs(f'./logs/theta_vs_l2/{args.DS}/lr_{args.lr}/{similarity_measure}', exist_ok=True)
-        plt.tight_layout()  # Makes sure everything fits without overlap
-        plt.savefig(f'./logs/theta_vs_l2/{args.DS}/lr_{args.lr}/{similarity_measure}/epoch_{epoch}_theta_vs_l2_{args.aug}_{args.mode}.png')
-        plt.close()  # Close the figure to free memory
-
-        return result
 
   def _get_similarity_matrix(self, x, x_aug, similarity_measure="cosine", T=0.2):
         
@@ -542,6 +418,13 @@ if __name__ == '__main__':
         pos_sim_all = 0
         neg_sim_all = 0
         model.train()
+
+        if args.plot_theta_l2 and epoch % 50 == 0:
+            all_pos_l2, all_pos_theta = [], []
+            all_neg_l2, all_neg_theta = [], []
+            all_real_pos_l2, all_real_pos_theta = [], []
+            all_real_neg_l2, all_real_neg_theta = [], []
+
         # labels = torch.empty(0, dtype=torch.long, device=device)
         # for data in dataloader:
         for batch_idx, data in enumerate(dataloader):
@@ -601,20 +484,6 @@ if __name__ == '__main__':
             else:
                raise RuntimeError(f"no mode matching {args.mode}, input should be: normal, cheated, rm_FN")
             
-            # scatter plot for theta and l2 norm
-            if args.plot_theta_l2 and epoch % 50 == 0:
-                if first_batch and hasattr(model, 'all_pos_l2'):
-                    del model.all_pos_l2, model.all_pos_theta, model.all_neg_l2, model.all_neg_theta, model.all_pos_cos, model.all_neg_cos
-                model.plot_theta_l2(x, x_aug, labels)
-                if last_batch:
-                    # tensorboard
-                    result = model.plot_theta_l2_epoch(args=args, epoch=epoch, similarity_measure=args.similarity_measure)
-                    writer.add_scalar('Theta/pos_avg_cos', result['pos_avg_cos'], epoch)
-                    writer.add_scalar('Theta/pos_avg_theta', result['pos_avg_theta'], epoch)
-                    writer.add_scalar('Theta/pos_avg_l2', result['pos_avg_l2'], epoch)
-                    writer.add_scalar('Theta/neg_avg_cos', result['neg_avg_cos'], epoch)
-                    writer.add_scalar('Theta/neg_avg_theta', result['neg_avg_theta'], epoch)
-                    writer.add_scalar('Theta/neg_avg_l2', result['neg_avg_l2'], epoch)
             # print(x)
             # print(x_aug)
             oloss = odecay * l2_reg_ortho(model)
@@ -625,6 +494,17 @@ if __name__ == '__main__':
                 loss += oloss
             loss.backward()
             optimizer.step()
+            if args.plot_theta_l2 and epoch % 50 == 0:
+                # pos_l2, pos_theta, neg_l2, neg_theta = plot_theta_l2(x_anchor, x_graph_pos)
+                pos_l2, pos_theta, neg_l2, neg_theta, real_pos_l2, real_pos_theta, real_neg_l2, real_neg_theta = plot_theta_l2(x, x_aug, data.y)
+                all_pos_l2.append(pos_l2)
+                all_pos_theta.append(pos_theta)
+                all_neg_l2.append(neg_l2)
+                all_neg_theta.append(neg_theta)
+                all_real_pos_l2.append(real_pos_l2)
+                all_real_pos_theta.append(real_pos_theta)
+                all_real_neg_l2.append(real_neg_l2)
+                all_real_neg_theta.append(real_neg_theta)
         # tensorboard
         writer.add_scalar('Loss/train', loss_all / len(dataloader.dataset), epoch)
         writer.add_scalar('Similarity/pos_sim', pos_sim_all / len(dataloader), epoch)
@@ -634,6 +514,9 @@ if __name__ == '__main__':
         # print("pos sim = ", pos_sim_all, "; neg sim = ", neg_sim_all)
         loss_list.append(loss_all / len(dataloader.dataset))
         if epoch % log_interval == 0:
+            if args.plot_theta_l2 and epoch % 50 == 0:
+                result = plot_theta_l2_epoch(all_pos_l2, all_pos_theta, all_neg_l2, all_neg_theta, all_real_pos_l2,
+                                             all_real_pos_theta, all_real_neg_l2, all_real_neg_theta, args=args, epoch=epoch)
             model.eval()
             emb, y = model.encoder.get_embeddings(dataloader_eval)
             # visualize_embeddings(emb, y, args, epoch, method="t-SNE")
