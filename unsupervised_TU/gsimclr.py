@@ -35,6 +35,7 @@ from sklearn.metrics import confusion_matrix
 from plot_similarity import plot_similarity_matrix
 from plot_sim_distribution import plot_similarity_distribution
 from plot_theta_l2_scatter import plot_theta_l2, plot_theta_l2_epoch
+from plot_single_anchor_FP_FN_distribution import plot_theta_l2_distribution
 from plot_tsne import visualize_embeddings
 
 class GcnInfomax(nn.Module):
@@ -505,6 +506,8 @@ if __name__ == '__main__':
                 all_real_pos_theta.append(real_pos_theta)
                 all_real_neg_l2.append(real_neg_l2)
                 all_real_neg_theta.append(real_neg_theta)
+            if args.plot_theta_l2_distribution and epoch % 100 == 0:
+                plot_theta_l2_distribution(x, x_aug, labels=data.y, args=args, epoch=epoch)
         # tensorboard
         writer.add_scalar('Loss/train', loss_all / len(dataloader.dataset), epoch)
         writer.add_scalar('Similarity/pos_sim', pos_sim_all / len(dataloader), epoch)
