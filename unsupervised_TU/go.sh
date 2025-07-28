@@ -1,4 +1,15 @@
 # #!/bin/bash -ex
+# # gpu = 0
+# for DS in MUTAG PROTEINS DD REDDIT-BINARY COLLAB
+# do
+#     CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DS --lr 1e-4 --local --num-gc-layers 5 --log_interval 10 --epochs 200 --plot_theta_l2 --plot_theta_l2_distribution
+# done
+# gpu = 1
+for DS in IMDB-BINARY REDDIT-MULTI-5K NCI1
+do
+      CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DS --lr 1e-4 --local --num-gc-layers 5 --log_interval 10 --epochs 200 --plot_theta_l2 --plot_theta_l2_distribution
+done
+
 # AUG=dnodes
 # DATASET=PROTEINS
 # for aug_ratio in 1 2 3 4 5 6 7 8 9
@@ -11,13 +22,13 @@
 # done
 
 #!/bin/bash -ex
-AUG=dnodes
-DATASET=MUTAG
-for aug_ratio in 2
-do
-  for seed in 0 
-  do
-    CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DATASET --lr 0.001 --local --num-gc-layers 5 --aug $AUG --seed $seed --aug_ratio $aug_ratio --epoch 200 --plot_theta_l2
+# AUG=dnodes
+# DATASET=MUTAG
+# for aug_ratio in 2
+# do
+#   for seed in 0 
+#   do
+#     CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DATASET --lr 0.001 --local --num-gc-layers 5 --aug $AUG --seed $seed --aug_ratio $aug_ratio --epoch 200 --plot_theta_l2 --plot_theta_l2_distribution
 
-  done
-done
+#   done
+# done

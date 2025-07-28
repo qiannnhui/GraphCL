@@ -26,6 +26,7 @@ from gin import Encoder
 from evaluate_embedding import evaluate_embedding
 from model import *
 from plot_theta_l2_scatter import plot_theta_l2, plot_theta_l2_epoch
+from plot_theta_l2_single_anchor_distribution import plot_theta_l2_distribution
 
 from arguments import arg_parse
 from torch_geometric.transforms import Constant
@@ -282,6 +283,9 @@ if __name__ == '__main__':
             if args.plot_theta_l2:
                 result = plot_theta_l2_epoch(all_pos_l2, all_pos_theta, all_neg_l2, all_neg_theta, all_real_pos_l2,
                                              all_real_pos_theta, all_real_neg_l2, all_real_neg_theta, args=args, epoch=epoch)
+            if args.plot_theta_l2_distribution and epoch % 100 == 0:
+                single_anchor_result = plot_theta_l2_distribution(x, x_aug, data.y, args=args, epoch=epoch)
+
             model.eval()
             emb, y = model.encoder.get_embeddings(dataloader_eval)
             acc_val, acc = evaluate_embedding(emb, y)
@@ -291,22 +295,20 @@ if __name__ == '__main__':
             if acc_val > best_acc_val:
                 best_acc_val = acc_val
                 print(f"Epoch {epoch}: new best val accuracy: {best_acc_val:.4f}, saving model...")
+                os.makedirs(f'./logs/ckpt/{args.DS}', exist_ok=True)
                 torch.save(model.state_dict(), f'./logs/ckpt/{args.DS}/best_model_{aug_ratio}_{args.seed}.pth')
 
             
 
     tpe  = ('local' if args.local else '') + ('prior' if args.prior else '')
-    if not os.path.exists("./logs"):
-        os.makedirs("./logs")
-    if not os.path.exists("./logs/GCL"):
-        os.makedirs("./logs/GCL")
-    if not os.path.exists(f"./logs/GCL/{args.DS}"):
-        os.makedirs(f"./logs/GCL/{args.DS}")
+    os.makedirs(f'./logs/single_anchor_dist/GCL/{args.DS}/{args.DS}_{aug_ratio}_{args.seed}', exist_ok=True)
 
-    with open((f'./logs/GCL/{args.DS}/{args.DS}_{aug_ratio}_'+str(args.seed)), 'a+') as f:
+    with open((f'./logssingle_anchor_dist//GCL/{args.DS}/{args.DS}_{aug_ratio}_'+str(args.seed)), 'a+') as f:
         s1 = json.dumps(stage_finish_epochs)
         s2 = json.dumps(loss_list)
         s3 = json.dumps(accuracies)
-        s4 = json.dumps(result) if args.plot_theta_l2 else ''
-        f.write('{},{},{},{},{},{},{},{}\n{}\n'.format(args.DS, args.num_gc_layers, epochs, log_interval, lr, s1, s2, s3, s4))
+        # s4 = json.dumps(result) if args.plot_theta_l2 else ''
+        f.write('{},{},{},{},{},{},{},{}\n'.format(args.DS, args.num_gc_layers, epochs, log_interval, lr, s1, s2, s3))
+        json.dump(single_anchor_result, f, indent=2, default=lambda o: o.item() if isinstance(o, np.generic) else str(o))
+        # s4 = json.dumps(single_anchor_result) if args.plot_theta_l2_distribution else ''
     
