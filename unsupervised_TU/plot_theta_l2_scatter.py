@@ -31,9 +31,9 @@ def plot_theta_l2(x, x_aug, labels=None):
         theta_matrix_deg = theta_matrix * 180.0 / torch.pi  # to degree
 
         # ==== l2 norm matrix ====
-        x_sq = (x ** 2).sum(dim=1, keepdim=True)  # (B, 1)
-        x_aug_sq = (x_aug ** 2).sum(dim=1, keepdim=True).T  # (1, B)
-        l2_matrix = torch.sqrt(x_sq + x_aug_sq - 2 * torch.einsum('ik,jk->ij', x, x_aug) + 1e-8)
+        x_sq = (x_norm ** 2).sum(dim=1, keepdim=True)  # (B, 1)
+        x_aug_sq = (x_aug_norm ** 2).sum(dim=1, keepdim=True).T  # (1, B)
+        l2_matrix = torch.sqrt(x_sq + x_aug_sq - 2 * torch.einsum('ik,jk->ij', x_norm, x_aug_norm) + 1e-8)
 
         # ==== getting data ====
         pos_theta = theta_matrix_deg[pos_mask].detach().cpu().numpy()
@@ -95,7 +95,7 @@ def plot_theta_l2_epoch(all_pos_l2, all_pos_theta, all_neg_l2, all_neg_theta, re
 
         # Plot for Positive Pairs
         plt.subplot(131)  # (1 row, 3 columns, 1st plot)
-        plt.scatter(pos_l2, pos_theta, color='deepskyblue', marker='^', s=80, label='Positive Pairs')
+        plt.scatter(pos_l2, pos_theta, color='deepskyblue', marker='^', s=400, label='Positive Pairs')
         if real_pos_l2 is not None:
             plt.scatter(real_pos_l2, real_pos_theta, color='green', label='Real Positive Pairs', alpha=0.6)
         plt.xlabel('L2 Norm', fontsize=fontsize)
@@ -108,7 +108,7 @@ def plot_theta_l2_epoch(all_pos_l2, all_pos_theta, all_neg_l2, all_neg_theta, re
 
         # Plot for Negative Pairs
         plt.subplot(132)  # (1 row, 3 columns, 2nd plot)
-        plt.scatter(neg_l2, neg_theta, color='orange', label='Negative Pairs', alpha=0.6)
+        plt.scatter(neg_l2, neg_theta, color='orange', marker='^', s=400, label='Negative Pairs', alpha=0.6)
         if real_neg_l2 is not None:
             plt.scatter(real_neg_l2, real_neg_theta, color='red', label='Real Negative Pairs', alpha=0.6)
         plt.xlabel('L2 Norm', fontsize=fontsize)
@@ -121,7 +121,7 @@ def plot_theta_l2_epoch(all_pos_l2, all_pos_theta, all_neg_l2, all_neg_theta, re
 
         # Plot for Both Positive & Negative Pairs
         plt.subplot(133)  # (1 row, 3 columns, 3rd plot)
-        plt.scatter(pos_l2, pos_theta, color='deepskyblue', marker='^', s=80, label='Positive Pairs')
+        plt.scatter(pos_l2, pos_theta, color='deepskyblue', marker='^', s=400, label='Positive Pairs')
         plt.scatter(neg_l2, neg_theta, color='orange', label='Negative Pairs', alpha=0.6)
         if real_pos_l2 is not None:
             plt.scatter(real_pos_l2, real_pos_theta, color='green', label='Real Positive Pairs', alpha=0.6)

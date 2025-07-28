@@ -213,7 +213,7 @@ if __name__ == '__main__':
         loss_all = 0
         model.train()
 
-        if args.plot_theta_l2 and epoch % log_interval == 0:
+        if args.plot_theta_l2 and epoch % 50 == 0:
             all_pos_l2, all_pos_theta = [], []
             all_neg_l2, all_neg_theta = [], []
             all_real_pos_l2, all_real_pos_theta = [], []
@@ -265,7 +265,7 @@ if __name__ == '__main__':
             loss_all += loss.item() * data.num_graphs
             loss.backward()
             optimizer.step()
-            if args.plot_theta_l2 and epoch % log_interval == 0:
+            if args.plot_theta_l2 and epoch % 50 == 0:
                 # pos_l2, pos_theta, neg_l2, neg_theta = plot_theta_l2(x_anchor, x_graph_pos)
                 pos_l2, pos_theta, neg_l2, neg_theta, real_pos_l2, real_pos_theta, real_neg_l2, real_neg_theta = plot_theta_l2(x, x_aug, data.y)
                 all_pos_l2.append(pos_l2)
@@ -280,7 +280,7 @@ if __name__ == '__main__':
         loss_list.append(loss_all / len(dataloader.dataset))
 
         if epoch % log_interval == 0:
-            if args.plot_theta_l2:
+            if args.plot_theta_l2 and epoch % 50 == 0:
                 result = plot_theta_l2_epoch(all_pos_l2, all_pos_theta, all_neg_l2, all_neg_theta, all_real_pos_l2,
                                              all_real_pos_theta, all_real_neg_l2, all_real_neg_theta, args=args, epoch=epoch)
             if args.plot_theta_l2_distribution and epoch % 100 == 0:
