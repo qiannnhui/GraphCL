@@ -142,6 +142,47 @@ class simclr(nn.Module):
 
     return loss
 
+  def reweight_loss(self, z_a, z_b, T=0.2, eps=1e-6):
+    """
+    • 正例 (i,i) 權重 = 0 ─ 僅影響分母
+    • easy / hard / false 根據與正例 (i,i) 的 angle / distance 來定義
+    """
+    B = z_a.size(0)
+    z_a_n, z_b_n = F.normalize(z_a, dim=1), F.normalize(z_b, dim=1)
+    sim = (z_a_n @ z_b_n.T).clamp(-1 + 1e-7, 1 - 1e-7)  # (B,B)
+    
+    angle_mat = torch.acos(sim)                         # 弧度
+    dist_mat = torch.cdist(z_a, z_b, p=2)               # L2 距離
+
+    # === 每個 positive pair (i,i) 的角度與距離 ===
+    pos_angle = angle_mat.diagonal().unsqueeze(1)       # (B,1)
+    pos_dist = dist_mat.diagonal().unsqueeze(1)         # (B,1)
+
+    # === 與正例比距離/角度差異來定義幾何關係 ===
+    close_theta = angle_mat <= pos_angle                # 角度更小
+    close_dist  = dist_mat  <= pos_dist                 # 距離更近
+
+    false_mask =  close_theta &  close_dist             # (更靠近正例)
+    easy_mask  = ~close_theta & ~close_dist             # (明顯遠離)
+    hard_mask  =  close_theta ^  close_dist             # (模糊地帶)
+    inter_1 = (false_mask & easy_mask).any()
+    inter_2 = (false_mask & hard_mask).any()
+    inter_3 = (easy_mask  & hard_mask).any()
+    assert not (inter_1 or inter_2 or inter_3), "Mask overlap detected!"
+    # === 權重矩陣 W (for denominator) ===
+    W = torch.full_like(sim, 3.23455410304745)               # 初始化為 easy
+    W[hard_mask]  = 3.23455410304745                         # 中等懲罰
+    W[false_mask] = 6.341284920537179                        # 高懲罰
+    W.fill_diagonal_(0.0)                               # 正例不進分母
+
+    # === 分子：正例 logit ===
+    log_pos = (sim.diagonal() / T)                      # (B,)
+
+    # === 分母：負例加權 + softmax ===
+    logit_neg = torch.log(W + eps) + sim / T
+    log_denom = torch.logsumexp(logit_neg, dim=1)       # (B,)
+
+    return -(log_pos - log_denom).mean()
 
 import random
 def setup_seed(seed):
@@ -261,7 +302,7 @@ if __name__ == '__main__':
             '''
 
             x_aug = model(data_aug.x, data_aug.edge_index, data_aug.batch, data_aug.num_graphs)
-            loss = model.loss_cal(x, x_aug)
+            loss = model.loss_cal(x, x_aug) if args.loss == 'InfoNCE' else model.reweight_loss(x, x_aug)
             loss_all += loss.item() * data.num_graphs
             loss.backward()
             optimizer.step()
@@ -295,20 +336,28 @@ if __name__ == '__main__':
             if acc_val > best_acc_val:
                 best_acc_val = acc_val
                 print(f"Epoch {epoch}: new best val accuracy: {best_acc_val:.4f}, saving model...")
-                os.makedirs(f'./logs/ckpt/{args.DS}', exist_ok=True)
-                torch.save(model.state_dict(), f'./logs/ckpt/{args.DS}/best_model_{aug_ratio}_{args.seed}.pth')
+                # os.makedirs(f'./logs/ckpt/{args.DS}', exist_ok=True)
+                # torch.save(model.state_dict(), f'./logs/ckpt/{args.DS}/best_model_{aug_ratio}_{args.seed}.pth')
 
             
 
     tpe  = ('local' if args.local else '') + ('prior' if args.prior else '')
-    os.makedirs(f'./logs/single_anchor_dist/GCL/{args.DS}/{args.DS}_{aug_ratio}_{args.seed}', exist_ok=True)
+    # os.makedirs(f'./logs/single_anchor_dist/GCL/{args.DS}/{args.DS}_{aug_ratio}_{args.seed}', exist_ok=True)
+    os.makedirs(f'./results/GCL/{args.DS}', exist_ok=True)
 
-    with open((f'./logssingle_anchor_dist//GCL/{args.DS}/{args.DS}_{aug_ratio}_'+str(args.seed)), 'a+') as f:
-        s1 = json.dumps(stage_finish_epochs)
-        s2 = json.dumps(loss_list)
-        s3 = json.dumps(accuracies)
-        # s4 = json.dumps(result) if args.plot_theta_l2 else ''
-        f.write('{},{},{},{},{},{},{},{}\n'.format(args.DS, args.num_gc_layers, epochs, log_interval, lr, s1, s2, s3))
-        json.dump(single_anchor_result, f, indent=2, default=lambda o: o.item() if isinstance(o, np.generic) else str(o))
+    # with open((f'./logs/single_anchor_dist/GCL/{args.DS}/{args.DS}_{aug_ratio}_'+str(args.seed)), 'a+') as f:
+    with open(f'./results/GCL/{args.DS}/{args.loss}_GCL.log', 'a') as f:
+        # s1 = json.dumps(stage_finish_epochs)
+        # s2 = json.dumps(loss_list)
+        # s3 = json.dumps(accuracies)
+        # # s4 = json.dumps(result) if args.plot_theta_l2 else ''
+        # f.write('{},{},{},{},{},{},{},{}\n'.format(args.DS, args.num_gc_layers, epochs, log_interval, lr, s1, s2, s3))
+        # json.dump(single_anchor_result, f, indent=2, default=lambda o: o.item() if isinstance(o, np.generic) else str(o))
         # s4 = json.dumps(single_anchor_result) if args.plot_theta_l2_distribution else ''
-    
+        f.write('\nFinal Test Accuracy: {} \n'.format(accuracies['test'][-1]))
+        f.write('Best Test Accuracy: {} \n'.format(max(accuracies['test'])))
+        f.write('Final Val Accuracy: {} \n'.format(accuracies['val'][-1]))
+        f.write('Best Val Accuracy: {} \n'.format(max(accuracies['val'])))
+        if args.plot_theta_l2:
+            f.write('result: {}\n'.format(result))
+        f.close()    

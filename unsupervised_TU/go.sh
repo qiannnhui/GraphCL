@@ -2,12 +2,12 @@
 # # gpu = 0
 # for DS in MUTAG PROTEINS DD REDDIT-BINARY COLLAB
 # do
-#     CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DS --lr 1e-4 --local --num-gc-layers 5 --log_interval 10 --epochs 200 --plot_theta_l2 --plot_theta_l2_distribution
+#     CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DS --lr 1e-2 --log_interval 10 --epochs 70 --loss reweighted_InfoNCE
 # done
 # gpu = 1
 for DS in IMDB-BINARY REDDIT-MULTI-5K NCI1
 do
-      CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DS --lr 1e-4 --local --num-gc-layers 5 --log_interval 10 --epochs 200 --plot_theta_l2 --plot_theta_l2_distribution
+      CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DS --log_interval 10 --epochs 70 --loss reweighted_InfoNCE --lr 1e-2
 done
 
 # AUG=dnodes
