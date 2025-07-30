@@ -245,48 +245,61 @@ class simclr(nn.Module):
 
         # ==== Plotting ====
         import matplotlib.pyplot as plt
-        fontsize = 40
-        plt.figure(figsize=(100, 25))
-        # plt.axis('equal')  # Set equal scaling for both axes
+        from matplotlib.lines import Line2D
 
-        # Plot for Positive Pairs
-        plt.subplot(131)  # (1 row, 3 columns, 1st plot)
-        plt.scatter(pos_l2, pos_theta, color='green', label='Positive Pairs', alpha=0.6)
-        plt.xlabel('L2 Norm', fontsize=fontsize)
-        plt.ylabel('Theta (degrees)', fontsize=fontsize)
-        plt.xticks(fontsize=fontsize)
-        plt.yticks(fontsize=fontsize)
-        plt.title(f'Positive Pairs (Epoch {epoch})', fontsize=fontsize)
-        plt.grid(True)
-        plt.legend(fontsize=fontsize)
+        fontsize = 36
+        dot_size = 30
 
-        # Plot for Negative Pairs
-        plt.subplot(132)  # (1 row, 3 columns, 2nd plot)
-        plt.scatter(neg_l2, neg_theta, color='red', label='Negative Pairs', alpha=0.6)
-        plt.xlabel('L2 Norm', fontsize=fontsize)
-        plt.ylabel('Theta (degrees)', fontsize=fontsize)
-        plt.xticks(fontsize=fontsize)
-        plt.yticks(fontsize=fontsize)
-        plt.title(f'Negative Pairs (Epoch {epoch})', fontsize=fontsize)
-        plt.grid(True)
-        plt.legend(fontsize=fontsize)
+        fig, axes = plt.subplots(1, 3, figsize=(36, 8))
+        plt.subplots_adjust(wspace=0.35)
 
-        # Plot for Both Positive & Negative Pairs
-        plt.subplot(133)  # (1 row, 3 columns, 3rd plot)
-        plt.scatter(pos_l2, pos_theta, color='green', label='Positive Pairs', alpha=0.6)
-        plt.scatter(neg_l2, neg_theta, color='red', label='Negative Pairs', alpha=0.6)
-        plt.xlabel('L2 Norm', fontsize=fontsize)
-        plt.ylabel('Theta (degrees)', fontsize=fontsize)
-        plt.xticks(fontsize=fontsize)
-        plt.yticks(fontsize=fontsize)
-        plt.title(f'Theta vs L2 Norm with {similarity_measure} (Epoch {epoch})', fontsize=fontsize)
-        plt.grid(True)
-        plt.legend(fontsize=fontsize)
+        # --- 子圖 1 ---
+        axes[0].scatter(pos_l2, pos_theta, color='#2ca02c', label='Positive Pairs', alpha=0.4, s=dot_size)
+        axes[0].set_xlabel('Distance (L2 Norm)', fontsize=fontsize)
+        axes[0].set_ylabel('Angle (degrees)', fontsize=fontsize)
+        axes[0].tick_params(labelsize=fontsize)
+        axes[0].text(0.5, -0.25, 'Angle vs Distance (Positive Pairs)',
+                    transform=axes[0].transAxes,
+                    ha='center', va='top',
+                    fontsize=fontsize, fontweight='bold')
+        axes[0].grid(True, linestyle='--', alpha=0.3)
+
+        # --- 子圖 2 ---
+        axes[1].scatter(neg_l2, neg_theta, color='#d62728', label='Negative Pairs', alpha=0.4, s=dot_size)
+        axes[1].set_xlabel('Distance (L2 Norm)', fontsize=fontsize)
+        axes[1].set_ylabel('Angle (degrees)', fontsize=fontsize)
+        axes[1].tick_params(labelsize=fontsize)
+        # axes[1].set_title('Angle vs Distance (Negative Pairs)', fontsize=fontsize)
+        axes[1].text(0.5, -0.25, 'Angle vs Distance (Negative Pairs)',
+                    transform=axes[1].transAxes,
+                    ha='center', va='top',
+                    fontsize=fontsize, fontweight='bold')
+        axes[1].grid(True, linestyle='--', alpha=0.3)
+
+        axes[2].scatter(pos_l2, pos_theta, color='#2ca02c', label='Positive Pairs', alpha=0.4, s=dot_size)
+        axes[2].scatter(neg_l2, neg_theta, color='#d62728', label='Negative Pairs', alpha=0.4, s=dot_size)
+        axes[2].set_xlabel('Distance (L2 Norm)', fontsize=fontsize)
+        axes[2].set_ylabel('Angle (degrees)', fontsize=fontsize)
+        axes[2].tick_params(labelsize=fontsize)
+        axes[2].text(0.5, -0.25, 'Angle vs Distance (Overlayed View)',
+                    transform=axes[2].transAxes,
+                    ha='center', va='top',
+                    fontsize=fontsize, fontweight='bold')
+        axes[2].grid(True, linestyle='--', alpha=0.3)
+
+        # --- legend with big markers ---
+        custom_lines = [
+            Line2D([0], [0], marker='o', color='w', label='Positive Pairs', markerfacecolor='#2ca02c', markersize=15),
+            Line2D([0], [0], marker='o', color='w', label='Negative Pairs', markerfacecolor='#d62728', markersize=15)
+        ]
+        axes[2].legend(handles=custom_lines, loc='lower right', fontsize=fontsize)
 
         # Save the figure with all plots
-        os.makedirs(f'./logs/theta_vs_l2/{args.DS}/lr_{args.lr}/{similarity_measure}', exist_ok=True)
+        # os.makedirs(f'./logs/theta_vs_l2/{args.DS}/lr_{args.lr}/{similarity_measure}', exist_ok=True)
+        os.makedirs(f'./logs/theta_vs_l2_paper', exist_ok=True)
         plt.tight_layout()  # Makes sure everything fits without overlap
-        plt.savefig(f'./logs/theta_vs_l2/{args.DS}/lr_{args.lr}/{similarity_measure}/epoch_{epoch}_theta_vs_l2_{args.aug}_{args.mode}.png')
+        # plt.savefig(f'./logs/theta_vs_l2/{args.DS}/lr_{args.lr}/{similarity_measure}/epoch_{epoch}_theta_vs_l2_{args.aug}_{args.mode}.png')
+        plt.savefig(f'./logs/theta_vs_l2_paper/Cheated_GCL_{args.DS}_{epoch}.pdf', bbox_inches='tight', dpi=300)
         plt.close()  # Close the figure to free memory
 
         return result
@@ -602,7 +615,7 @@ if __name__ == '__main__':
                raise RuntimeError(f"no mode matching {args.mode}, input should be: normal, cheated, rm_FN")
             
             # scatter plot for theta and l2 norm
-            if args.plot_theta_l2 and epoch % 50 == 0:
+            if args.plot_theta_l2 and epoch % log_interval == 0:
                 if first_batch and hasattr(model, 'all_pos_l2'):
                     del model.all_pos_l2, model.all_pos_theta, model.all_neg_l2, model.all_neg_theta, model.all_pos_cos, model.all_neg_cos
                 model.plot_theta_l2(x, x_aug, labels)
