@@ -34,6 +34,8 @@ import time
 from sklearn.metrics import confusion_matrix
 from plot_similarity import plot_similarity_matrix
 from plot_sim_distribution import plot_similarity_distribution
+from plot_theta_l2_scatter import plot_theta_l2, plot_theta_l2_epoch
+from plot_single_anchor_FP_FN_distribution import plot_theta_l2_distribution
 from plot_tsne import visualize_embeddings
 
 class GcnInfomax(nn.Module):
@@ -555,6 +557,13 @@ if __name__ == '__main__':
         pos_sim_all = 0
         neg_sim_all = 0
         model.train()
+
+        if args.plot_theta_l2 and epoch % 50 == 0:
+            all_pos_l2, all_pos_theta = [], []
+            all_neg_l2, all_neg_theta = [], []
+            all_real_pos_l2, all_real_pos_theta = [], []
+            all_real_neg_l2, all_real_neg_theta = [], []
+
         # labels = torch.empty(0, dtype=torch.long, device=device)
         # for data in dataloader:
         for batch_idx, data in enumerate(dataloader):
@@ -638,6 +647,19 @@ if __name__ == '__main__':
                 loss += oloss
             loss.backward()
             optimizer.step()
+            if args.plot_theta_l2 and epoch % 50 == 0:
+                # pos_l2, pos_theta, neg_l2, neg_theta = plot_theta_l2(x_anchor, x_graph_pos)
+                pos_l2, pos_theta, neg_l2, neg_theta, real_pos_l2, real_pos_theta, real_neg_l2, real_neg_theta = plot_theta_l2(x, x_aug, data.y)
+                all_pos_l2.append(pos_l2)
+                all_pos_theta.append(pos_theta)
+                all_neg_l2.append(neg_l2)
+                all_neg_theta.append(neg_theta)
+                all_real_pos_l2.append(real_pos_l2)
+                all_real_pos_theta.append(real_pos_theta)
+                all_real_neg_l2.append(real_neg_l2)
+                all_real_neg_theta.append(real_neg_theta)
+            if args.plot_theta_l2_distribution and epoch % 100 == 0:
+                plot_theta_l2_distribution(x, x_aug, labels=data.y, args=args, epoch=epoch)
         # tensorboard
         writer.add_scalar('Loss/train', loss_all / len(dataloader.dataset), epoch)
         writer.add_scalar('Similarity/pos_sim', pos_sim_all / len(dataloader), epoch)
@@ -647,6 +669,9 @@ if __name__ == '__main__':
         # print("pos sim = ", pos_sim_all, "; neg sim = ", neg_sim_all)
         loss_list.append(loss_all / len(dataloader.dataset))
         if epoch % log_interval == 0:
+            if args.plot_theta_l2 and epoch % 50 == 0:
+                result = plot_theta_l2_epoch(all_pos_l2, all_pos_theta, all_neg_l2, all_neg_theta, all_real_pos_l2,
+                                             all_real_pos_theta, all_real_neg_l2, all_real_neg_theta, args=args, epoch=epoch)
             model.eval()
             emb, y = model.encoder.get_embeddings(dataloader_eval)
             # visualize_embeddings(emb, y, args, epoch, method="t-SNE")
