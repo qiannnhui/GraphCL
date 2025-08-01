@@ -171,8 +171,8 @@ class simclr(nn.Module):
     assert not (inter_1 or inter_2 or inter_3), "Mask overlap detected!"
     # === 權重矩陣 W (for denominator) ===
     W = torch.full_like(sim, 3.23455410304745)               # 初始化為 easy
-    W[hard_mask]  = 3.23455410304745                         # 中等懲罰
-    W[false_mask] = 6.341284920537179                        # 高懲罰
+    # W[hard_mask]  = 3.23455410304745                         # 中等懲罰
+    W[false_mask] = 0.0                        # 高懲罰
     W.fill_diagonal_(0.0)                               # 正例不進分母
 
     # === 分子：正例 logit ===
@@ -346,7 +346,7 @@ if __name__ == '__main__':
     os.makedirs(f'./results/GCL/{args.DS}', exist_ok=True)
 
     # with open((f'./logs/single_anchor_dist/GCL/{args.DS}/{args.DS}_{aug_ratio}_'+str(args.seed)), 'a+') as f:
-    with open(f'./results/GCL/{args.DS}/{args.loss}_GCL.log', 'a') as f:
+    with open(f'./results/GCL/{args.DS}/{args.loss}_GCL_new.log', 'a') as f:
         # s1 = json.dumps(stage_finish_epochs)
         # s2 = json.dumps(loss_list)
         # s3 = json.dumps(accuracies)
