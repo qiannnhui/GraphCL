@@ -30,7 +30,6 @@ from plot_theta_l2_single_anchor_distribution import plot_theta_l2_distribution
 
 from arguments import arg_parse
 from torch_geometric.transforms import Constant
-import pdb
 
 
 class GcnInfomax(nn.Module):
@@ -193,6 +192,10 @@ def setup_seed(seed):
     np.random.seed(seed)
     random.seed(seed)
 
+def gen_simgcl_aug(emb):
+    random_noise = torch.rand(emb.size()).to(emb.device)
+    emb += torch.sign(emb) * torch.nn.functional.normalize(random_noise, p=2, dim=1) * 0.1 # 0.1 is the noise scale(self.eps)
+    return emb
 
 if __name__ == '__main__':
     
@@ -271,23 +274,23 @@ if __name__ == '__main__':
             data = data.to(device)
             x = model(data.x, data.edge_index, data.batch, data.num_graphs)
 
-            if args.aug == 'dnodes' or args.aug == 'subgraph' or args.aug == 'random2' or args.aug == 'random3' or args.aug == 'random4':
-                # node_num_aug, _ = data_aug.x.size()
-                edge_idx = data_aug.edge_index.numpy()
-                _, edge_num = edge_idx.shape
-                idx_not_missing = [n for n in range(node_num) if (n in edge_idx[0] or n in edge_idx[1])]
+            # if args.aug == 'dnodes' or args.aug == 'subgraph' or args.aug == 'random2' or args.aug == 'random3' or args.aug == 'random4':
+            #     # node_num_aug, _ = data_aug.x.size()
+            #     edge_idx = data_aug.edge_index.numpy()
+            #     _, edge_num = edge_idx.shape
+            #     idx_not_missing = [n for n in range(node_num) if (n in edge_idx[0] or n in edge_idx[1])]
 
-                node_num_aug = len(idx_not_missing)
-                data_aug.x = data_aug.x[idx_not_missing]
+            #     node_num_aug = len(idx_not_missing)
+            #     data_aug.x = data_aug.x[idx_not_missing]
 
                 
 
-                data_aug.batch = data.batch[idx_not_missing]
-                idx_dict = {idx_not_missing[n]:n for n in range(node_num_aug)}
-                edge_idx = [[idx_dict[edge_idx[0, n]], idx_dict[edge_idx[1, n]]] for n in range(edge_num) if not edge_idx[0, n] == edge_idx[1, n]]
-                data_aug.edge_index = torch.tensor(edge_idx).transpose_(0, 1)
+            #     data_aug.batch = data.batch[idx_not_missing]
+            #     idx_dict = {idx_not_missing[n]:n for n in range(node_num_aug)}
+            #     edge_idx = [[idx_dict[edge_idx[0, n]], idx_dict[edge_idx[1, n]]] for n in range(edge_num) if not edge_idx[0, n] == edge_idx[1, n]]
+            #     data_aug.edge_index = torch.tensor(edge_idx).transpose_(0, 1)
 
-            data_aug = data_aug.to(device)
+            # data_aug = data_aug.to(device)
 
             '''
             print(data.edge_index)
@@ -301,7 +304,8 @@ if __name__ == '__main__':
             pdb.set_trace()
             '''
 
-            x_aug = model(data_aug.x, data_aug.edge_index, data_aug.batch, data_aug.num_graphs)
+            # x_aug = model(data_aug.x, data_aug.edge_index, data_aug.batch, data_aug.num_graphs)
+            x_aug = gen_simgcl_aug(x)
             loss = model.loss_cal(x, x_aug) if args.loss == 'InfoNCE' else model.reweight_loss(x, x_aug)
             loss_all += loss.item() * data.num_graphs
             loss.backward()
@@ -343,10 +347,10 @@ if __name__ == '__main__':
 
     tpe  = ('local' if args.local else '') + ('prior' if args.prior else '')
     # os.makedirs(f'./logs/single_anchor_dist/GCL/{args.DS}/{args.DS}_{aug_ratio}_{args.seed}', exist_ok=True)
-    os.makedirs(f'./results/GCL/{args.DS}', exist_ok=True)
+    os.makedirs(f'./results/SimGCL/{args.DS}', exist_ok=True)
 
     # with open((f'./logs/single_anchor_dist/GCL/{args.DS}/{args.DS}_{aug_ratio}_'+str(args.seed)), 'a+') as f:
-    with open(f'./results/GCL/{args.DS}/{args.loss}_GCL_new.log', 'a') as f:
+    with open(f'./results/SimGCL/{args.DS}/{args.loss}_SimGCL.log', 'a') as f:
         # s1 = json.dumps(stage_finish_epochs)
         # s2 = json.dumps(loss_list)
         # s3 = json.dumps(accuracies)

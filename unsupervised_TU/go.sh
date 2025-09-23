@@ -1,20 +1,22 @@
 # #!/bin/bash -ex
 # # gpu = 0
-# for DS in MUTAG PROTEINS DD REDDIT-BINARY COLLAB
-# do
-#       for i in {0..4}
-#       do
-#           CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DS --lr 1e-2 --log_interval 10 --epochs 100 --loss reweighted_InfoNCE
-#       done
-# done
-# gpu = 1
-for DS in IMDB-BINARY REDDIT-MULTI-5K NCI1
+for DS in PROTEINS DD REDDIT-BINARY COLLAB
 do
       for i in {0..4}
       do
-            CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DS --log_interval 10 --epochs 100 --loss reweighted_InfoNCE --lr 1e-2
+      #     CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DS --lr 1e-2 --log_interval 10 --epochs 100 --loss reweighted_InfoNCE
+            CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DS --log_interval 10 --epochs 100 --lr 1e-2 --plot_theta_l2
       done
 done
+# gpu = 1
+# for DS in MUTAG IMDB-BINARY REDDIT-MULTI-5K NCI1 COLLAB
+# do
+#       for i in {0..4}
+#       do
+#             # CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DS --log_interval 10 --epochs 100 --loss reweighted_InfoNCE --lr 1e-2
+#             CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DS --log_interval 10 --epochs 100 --lr 1e-2 --plot_theta_l2
+#       done
+# done
 
 # AUG=dnodes
 # DATASET=PROTEINS

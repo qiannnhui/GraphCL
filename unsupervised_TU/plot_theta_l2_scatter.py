@@ -18,8 +18,10 @@ def plot_theta_l2(x, x_aug, labels=None):
         Calculate theta and l2 norm data for plotting
         """
         # ==== get cosine similarity matrix ====
-        x_norm = x / x.norm(dim=1, keepdim=True)
-        x_aug_norm = x_aug / x_aug.norm(dim=1, keepdim=True)
+        # x_norm = x / x.norm(dim=1, keepdim=True)
+        # x_aug_norm = x_aug / x_aug.norm(dim=1, keepdim=True)
+        x_norm = x
+        x_aug_norm = x_aug
         cos_sim_matrix = torch.einsum('ik,jk->ij', x_norm, x_aug_norm)  # (B, B)
 
         # ==== create pos and neg mask ====
@@ -135,9 +137,9 @@ def plot_theta_l2_epoch(all_pos_l2, all_pos_theta, all_neg_l2, all_neg_theta, re
         plt.legend(fontsize=fontsize)
 
         # Save the figure with all plots
-        os.makedirs(f'./logs/theta_vs_l2/original_GCL/{args.DS}/lr_{args.lr}/{similarity_measure}', exist_ok=True)
+        os.makedirs(f'./logs/theta_vs_l2/SimGCL/{args.DS}/lr_{args.lr}/{similarity_measure}', exist_ok=True)
         plt.tight_layout()  # Makes sure everything fits without overlap
-        plt.savefig(f'./logs/theta_vs_l2/original_GCL/{args.DS}/lr_{args.lr}/{similarity_measure}/epoch_{epoch}_theta_vs_l2_{args.aug}.png')
+        plt.savefig(f'./logs/theta_vs_l2/SimGCL/{args.DS}/lr_{args.lr}/{similarity_measure}/epoch_{epoch}_theta_vs_l2_{args.aug}.png')
         plt.close()  # Close the figure to free memory
 
         return result
