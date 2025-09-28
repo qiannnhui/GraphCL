@@ -12,12 +12,12 @@
 
 #!/bin/bash -ex
 AUG=dnodes
-DATASET=MUTAG
-for aug_ratio in 2
+aug_ratio=2
+for DATASET in NCI1 PROTEINS REDDIT-BINARY REDDIT-MULTI-5K COLLAB
 do
-  for seed in 0 
+  for seed in {0..4}
   do
-    CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DATASET --lr 0.001 --local --num-gc-layers 5 --aug $AUG --seed $seed --aug_ratio $aug_ratio --epoch 200
+    CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DATASET --lr 0.001 --local --num-gc-layers 5 --aug $AUG --seed $seed --aug_ratio $aug_ratio --epoch 100
 
   done
 done

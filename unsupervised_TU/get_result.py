@@ -7,10 +7,10 @@ plot = False
 dataset_name = "PROTEINS"
 # node, edge, attr
 SADA_aug = "attr"
-aug_ratio = 5
+aug_ratio = 2
 file_list = []
 for i in range(5):
-    file_path = f"./logs/GCL/{dataset_name}/{dataset_name}_0.{aug_ratio}_{i}"
+    file_path = f"./logs/GCL/{dataset_name}/time/{dataset_name}_0.{aug_ratio}_{i}"
     file_list.append(file_path)
 
 

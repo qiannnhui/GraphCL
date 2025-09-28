@@ -29,6 +29,7 @@ from model import *
 from arguments import arg_parse
 from torch_geometric.transforms import Constant
 import pdb
+import time
 
 
 class GcnInfomax(nn.Module):
@@ -152,6 +153,7 @@ def setup_seed(seed):
 
 
 if __name__ == '__main__':
+    start_time = time.time()
     
     args = arg_parse()
     setup_seed(args.seed)
@@ -270,20 +272,18 @@ if __name__ == '__main__':
                 best_acc_val = acc_val
                 print(f"Epoch {epoch}: new best val accuracy: {best_acc_val:.4f}, saving model...")
                 torch.save(model.state_dict(), f'./logs/ckpt/{args.DS}/best_model_{aug_ratio}_{args.seed}.pth')
+    end_time = time.time()
+    total_time = end_time - start_time
 
             
 
     tpe  = ('local' if args.local else '') + ('prior' if args.prior else '')
-    if not os.path.exists("./logs"):
-        os.makedirs("./logs")
-    if not os.path.exists("./logs/GCL"):
-        os.makedirs("./logs/GCL")
-    if not os.path.exists(f"./logs/GCL/{args.DS}"):
-        os.makedirs(f"./logs/GCL/{args.DS}")
+    os.makedirs(f"./logs/GCL/{args.DS}/time", exist_ok=True)
 
-    with open((f'./logs/GCL/{args.DS}/{args.DS}_{aug_ratio}_'+str(args.seed)), 'a+') as f:
+    with open((f'./logs/GCL/{args.DS}/time/{args.DS}_{aug_ratio}_'+str(args.seed)), 'a+') as f:
         s1 = json.dumps(stage_finish_epochs)
         s2 = json.dumps(loss_list)
         s3 = json.dumps(accuracies)
         f.write('{},{},{},{},{},{},{},{}\n'.format(args.DS, args.num_gc_layers, epochs, log_interval, lr, s1, s2, s3))
+        f.write('Time: {:.4f} s\n'.format(total_time))
     
