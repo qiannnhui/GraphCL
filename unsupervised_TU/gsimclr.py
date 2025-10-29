@@ -504,7 +504,7 @@ if __name__ == '__main__':
     setup_seed(args.seed)
 
     # tensorboard
-    writer = SummaryWriter(log_dir=f'logs/500epochs_log_interval_10/{args.DS}/lr_{args.lr}/tensorboard_{args.similarity_measure}_{args.aug}_{args.mode}_{time.ctime(time.time())}_{args.or_loss}')
+    writer = SummaryWriter(log_dir=f'logs/KDE/200epochs_log_interval_10/{args.DS}/lr_{args.lr}/tensorboard_{args.similarity_measure}_{args.aug}_{args.mode}_{time.ctime(time.time())}_{args.or_loss}')
 
     accuracies = {'val':[], 'test':[]}
     epochs = args.epochs

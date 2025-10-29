@@ -8,6 +8,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from math import ceil
 from typing import Optional, Sequence, Tuple, Union
+from matplotlib.colors import PowerNorm, Normalize
 
 # -------- 輔助：容忍 torch / CUDA 張量 --------
 def _to_numpy(x):
@@ -93,7 +94,7 @@ def plot_kde_unitcircle_kde(
     sigma_r: float = 0.16,
     kde_bw: Optional[float] = None,
     ncols: int = 4,
-    cmap: str = "viridis",
+    cmap: str = "inferno",
     titlesize: int = 28,
     overall_title: str = "Uniformity\nFeature Distribution",
     figsize_per_panel: float = 3.1,
@@ -133,8 +134,7 @@ def plot_kde_unitcircle_kde(
             t_grid, dens = _kde_theta(theta_c, grid_bins=theta_bins, bw=kde_bw)
             img = _ring_image(t_grid, dens, img_size=img_size, sigma_r=sigma_r)
             panels.append((f"Class {c}", img))
-
-    # 佈局
+    
     n = len(panels)
     ncols = min(ncols, n)
     nrows = ceil(n / ncols)
@@ -155,7 +155,7 @@ def plot_kde_unitcircle_kde(
                 title, img = panels[k]
                 ax.imshow(img, origin="lower",
                           extent=[-1.15, 1.15, -1.15, 1.15],
-                          cmap=cmap)
+                          cmap=cmap, norm=PowerNorm(5))
                 # 外框圓
                 circle = plt.Circle((0, 0), 1.0, fill=False, linewidth=1.0, alpha=0.45, color="k")
                 ax.add_patch(circle)
