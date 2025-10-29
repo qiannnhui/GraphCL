@@ -565,6 +565,12 @@ if __name__ == '__main__':
             all_real_pos_l2, all_real_pos_theta = [], []
             all_real_neg_l2, all_real_neg_theta = [], []
 
+        if args.plot_kde and epoch % log_interval == 0:
+            all_anchor_embeddings = []
+            all_anchor_labels = []
+            all_pos_embeddings = []
+            all_pos_labels = []
+
         # labels = torch.empty(0, dtype=torch.long, device=device)
         # for data in dataloader:
         for batch_idx, data in enumerate(dataloader):
@@ -638,6 +644,12 @@ if __name__ == '__main__':
                     writer.add_scalar('Theta/neg_avg_cos', result['neg_avg_cos'], epoch)
                     writer.add_scalar('Theta/neg_avg_theta', result['neg_avg_theta'], epoch)
                     writer.add_scalar('Theta/neg_avg_l2', result['neg_avg_l2'], epoch)
+            if args.plot_kde and epoch % log_interval == 0:
+                all_anchor_embeddings.append(x.detach().cpu())
+                all_anchor_labels.append(data.y.detach().cpu())
+                all_pos_embeddings.append(x_aug.detach().cpu())
+                all_pos_labels.append(data.y.detach().cpu())
+
             # print(x)
             # print(x_aug)
             oloss = odecay * l2_reg_ortho(model)
@@ -670,21 +682,46 @@ if __name__ == '__main__':
         # print("pos sim = ", pos_sim_all, "; neg sim = ", neg_sim_all)
         loss_list.append(loss_all / len(dataloader.dataset))
         if epoch % log_interval == 0:
-            if args.plot_KDE:
+            if args.plot_kde:
                 os.makedirs(f'KDE/{args.DS}/{args.mode}/{args.aug}/anchor', exist_ok=True)
                 os.makedirs(f'KDE/{args.DS}/{args.mode}/{args.aug}/graph_pos', exist_ok=True)
+                X_anchor = torch.cat(all_anchor_embeddings, dim=0).numpy()
+                y_anchor = torch.cat(all_anchor_labels, dim=0).numpy()
+                X_pos = torch.cat(all_pos_embeddings, dim=0).numpy()
+                y_pos = torch.cat(all_pos_labels, dim=0).numpy()
+                
+                if len(X_anchor) > 20000:
+                    idx = np.random.choice(len(X_anchor), 20000, replace=False)
+                    X_anchor = X_anchor[idx]
+                    y_anchor = y_anchor[idx]
+
                 plot_kde_unitcircle_kde(
-                    x.detach().cpu().numpy(),                 # (N, D) 的 embeddings
-                    data.y.detach().cpu().numpy(),                 # (N,) 的標籤（int 或可 hash）
-                    classes=None,      # 要畫哪些 class，None=全部
+                    X_anchor, y_anchor,
+                    classes=None,
                     save_path=f'KDE/{args.DS}/{args.mode}/{args.aug}/anchor/epoch_{epoch}_kde_unit_circle',
+                    plot_scatter=True,
                 )
                 plot_kde_unitcircle_kde(
-                    x_aug.detach().cpu().numpy(),                 # (N, D) 的 embeddings
-                    data.y.detach().cpu().numpy(),                 # (N,) 的標籤（int 或可 hash）
-                    classes=None,      # 要畫哪些 class，None=全部
+                    X_pos, y_pos,
+                    classes=None,
                     save_path=f'KDE/{args.DS}/{args.mode}/{args.aug}/graph_pos/epoch_{epoch}_kde_unit_circle',
+                    plot_scatter=True,
                 )
+
+                del all_anchor_embeddings, all_anchor_labels, all_pos_embeddings, all_pos_labels
+                torch.cuda.empty_cache()
+                # plot_kde_unitcircle_kde(
+                #     x.detach().cpu().numpy(),                 # (N, D) 的 embeddings
+                #     data.y.detach().cpu().numpy(),                 # (N,) 的標籤（int 或可 hash）
+                #     classes=None,      # 要畫哪些 class，None=全部
+                #     save_path=f'KDE/{args.DS}/{args.mode}/{args.aug}/anchor/epoch_{epoch}_kde_unit_circle',
+                # )
+                # plot_kde_unitcircle_kde(
+                #     x_aug.detach().cpu().numpy(),                 # (N, D) 的 embeddings
+                #     data.y.detach().cpu().numpy(),                 # (N,) 的標籤（int 或可 hash）
+                #     classes=None,      # 要畫哪些 class，None=全部
+                #     save_path=f'KDE/{args.DS}/{args.mode}/{args.aug}/graph_pos/epoch_{epoch}_kde_unit_circle',
+                # )
 
             if args.plot_theta_l2 and epoch % 50 == 0:
                 result = plot_theta_l2_epoch(all_pos_l2, all_pos_theta, all_neg_l2, all_neg_theta, all_real_pos_l2,

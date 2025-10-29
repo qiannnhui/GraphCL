@@ -84,7 +84,48 @@ def _ring_image(theta_grid: np.ndarray,
     img[R > 1.35] = 0.0
     return img
 
-# -------- 主函式：整排圖 --------
+def plot_embedding_scatter(
+    X2,
+    y=None,
+    figsize=(6, 6),
+    alpha=0.7,
+    s=20,
+    title="Embedding Scatter (2D)",
+    cmap="tab10",
+    save_path=None,
+):
+    X2 = _to_numpy(X2)
+    assert X2.shape[1] == 2, "X2 must be 2D embeddings."
+
+    plt.figure(figsize=figsize)
+
+    if y is None:
+        plt.scatter(X2[:, 0], X2[:, 1], s=s, alpha=alpha, color='steelblue')
+    else:
+        y = _labels_1d(y)
+        classes = np.unique(y)
+        cmap_obj = plt.get_cmap(cmap)
+        for i, c in enumerate(classes):
+            mask = (y == c)
+            plt.scatter(
+                X2[mask, 0], X2[mask, 1],
+                s=s, alpha=alpha,
+                color=cmap_obj(i / len(classes)),
+                label=f"Class {c}"
+            )
+        plt.legend(loc="best", frameon=False)
+
+    plt.xlabel("Component 1", fontsize=12)
+    plt.ylabel("Component 2", fontsize=12)
+    plt.title(title, fontsize=14)
+    plt.grid(alpha=0.3)
+    plt.axis("equal")
+
+    if save_path is not None:
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+    plt.close()
+
+
 def plot_kde_unitcircle_kde(
     X: Union[np.ndarray, "torch.Tensor"],
     y: Optional[Union[np.ndarray, "torch.Tensor"]] = None,
@@ -100,6 +141,7 @@ def plot_kde_unitcircle_kde(
     figsize_per_panel: float = 3.1,
     save_path: Optional[str] = None,
     show: bool = True,
+    plot_scatter: bool = False,
 ):
     """
     X: (N,D) embeddings；y: (N,) 整數或可 hash 的標籤（None 時只畫 Overall）。
@@ -110,6 +152,9 @@ def plot_kde_unitcircle_kde(
     X = _to_numpy(X)
     X2 = _pca_2d(X)
     U, theta_all = _unit_and_theta(X2)
+    if plot_scatter:
+        scatter_path = save_path.replace("_kde_unit_circle", "_2d_scatter")
+        plot_embedding_scatter(X2, y=y, save_path=scatter_path)
 
     # 先做 Overall
     t_grid_all, dens_all = _kde_theta(theta_all, grid_bins=theta_bins, bw=kde_bw)
@@ -172,23 +217,3 @@ def plot_kde_unitcircle_kde(
     if show:
         plt.show()
     plt.close(fig)
-
-# # -------- 範例（直接執行本檔測試） --------
-# if __name__ == "__main__":
-#     rng = np.random.default_rng(0)
-#     N = 2400
-#     classes = [0, 3, 6, 9]
-#     y = rng.choice(classes, size=N)
-#     means = {0:0.15*np.pi, 3:0.55*np.pi, 6:0.85*np.pi, 9:1.45*np.pi}
-#     theta = np.array([rng.normal(means[c], 0.22) for c in y])
-#     r = rng.normal(1.0, 0.18, size=N)
-#     X2 = np.c_[r*np.cos(theta), r*np.sin(theta)]
-#     X = np.c_[X2, rng.normal(size=(N, 6))]  # 假裝高維
-
-#     plot_kde_unitcircle_kde(
-#         X, y, classes=classes,
-#         theta_bins=720, img_size=420, sigma_r=0.17,
-#         kde_bw=None, ncols=5, cmap="cividis",
-#         titlesize=26, overall_title="Uniformity\nFeature Distribution",
-#         save_path=None, show=True
-#     )

@@ -1,25 +1,25 @@
 #!/bin/bash -ex
-# for DS in MUTAG DD PROTEINS IMDB-BINARY NCI1
-# do
-#   for AUG in none dnodes random3
-#   do
-#     for MODE in normal cheated rm_FN rm_FP
-#     do
-#         CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DS --lr 1e-4 --local --num-gc-layers 5 --aug $AUG --mode $MODE --log_interval 10 --epochs 200 --plot_KDE
-#     done
-#   done
-# done
-
-for DS in REDDIT-BINARY REDDIT-MULTI-5K
+for DS in MUTAG DD PROTEINS IMDB-BINARY NCI1
 do
   for AUG in none dnodes random3
   do
     for MODE in normal cheated rm_FN rm_FP
     do
-        CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DS --lr 1e-4 --local --num-gc-layers 5 --aug $AUG --mode $MODE --log_interval 10 --epochs 200 --plot_KDE
+        CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DS --lr 1e-4 --local --num-gc-layers 5 --aug $AUG --mode $MODE --log_interval 10 --epochs 200 --plot_kde
     done
   done
 done
+
+# for DS in REDDIT-BINARY REDDIT-MULTI-5K
+# do
+#   for AUG in none dnodes random3
+#   do
+#     for MODE in normal cheated rm_FN rm_FP
+#     do
+#         CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DS --lr 1e-4 --local --num-gc-layers 5 --aug $AUG --mode $MODE --log_interval 10 --epochs 200 --plot_kde
+#     done
+#   done
+# done
 # # gpu = 0
 # for DS in PROTEINS DD REDDIT-BINARY COLLAB
 # do
