@@ -486,7 +486,63 @@ class simclr(nn.Module):
        self.get_confusion_matrix(labels=labels, sim_matrix=cos_sim_matrix, args=args, epoch=epoch)
 
     return loss, pos_sim_, neg_sim_
+  
+#   def loss_cal_reweighted(self, x, x_aug, labels=None, get_cm=False, epoch=None):
+  def loss_cal_reweighted(self, z_a, z_b, T=0.2, eps=1e-6, dist=False, neg_aug=False):
 
+        # --- normalize for cosine ---
+        z_a_n = F.normalize(z_a, dim=1)
+        z_b_n = F.normalize(z_b, dim=1)
+        # --- cosines ---
+        sim_ab = (z_a_n @ z_b_n.T).clamp(-1 + 1e-7, 1 - 1e-7)   # pos pairs (i,i)
+        sim_aa = (z_a_n @ z_a_n.T).clamp(-1 + 1e-7, 1 - 1e-7)   # others (neg pairs)
+
+        # --- angles ---
+        angle_pos_ab = torch.acos(sim_ab.diagonal()).unsqueeze(1)  # (B,1)  z_a[i] vs z_b[i]
+        angle_aa     = torch.acos(sim_aa)                          # (B,B)  z_a[i] vs z_a[j]
+        if neg_aug:
+            # the negatives are the augmented pairs
+            angle_ab     = torch.acos(sim_ab)                          # (B,B)  z_a[i] vs z_a[j]
+            close_theta = angle_ab <= angle_pos_ab            # (B,B)
+        else:
+            # the negatives are the original pairs
+            close_theta = angle_aa <= angle_pos_ab            # (B,B)
+        # no matter neg_aug is True or False, FN_matrix is the same (both are from non-augmented anchors but use augmented positives to determine closeness)
+        FN_theta_matrix = angle_aa <= angle_pos_ab            # (B,B)
+
+        # --- distances ---
+        if dist:
+            dist_pos_ab = torch.cdist(z_a, z_b, p=2).diagonal().unsqueeze(1)  # (B,1)
+            dist_aa     = torch.cdist(z_a, z_a, p=2)                          # (B,B)
+            if neg_aug:
+                dist_ab     = torch.cdist(z_a, z_b, p=2)                          # (B,B)
+                close_dist = dist_ab <= dist_pos_ab           # (B,B)
+            else:
+                close_dist = dist_aa <= dist_pos_ab           # (B,B)
+            false_mask = close_theta & close_dist
+
+            # get FN_matrix using positive pair boundary on non-augmented anchors
+            FN_dist_matrix = dist_aa <= dist_pos_ab            # (B,B)
+            FN_matrix = FN_theta_matrix & FN_dist_matrix
+        else:
+            false_mask = close_theta
+            FN_matrix = FN_theta_matrix
+
+        false_mask.fill_diagonal_(False)
+
+        # reweighting
+        W = torch.full_like(sim_aa, 1.0)   # Assume all easy
+        W[false_mask] = 0.0                        # reweight false negatives
+        W.fill_diagonal_(0.0)                      # avoid i==i
+
+        # === pos pairs ===
+        log_pos = sim_ab.diagonal() / T            # (B,)
+
+        # === neg pairs ===
+        logit_neg = torch.log(W + eps) + sim_aa / T        # (B,B)
+        log_denom = torch.logsumexp(logit_neg, dim=1)      # (B,)
+
+        return -(log_pos - log_denom).mean(), FN_matrix
 
 import random
 def setup_seed(seed):
@@ -627,6 +683,10 @@ if __name__ == '__main__':
             elif args.mode == 'rm_FP':
                 # loss, pos_sim, neg_sim = model.loss_cal_rm_FP_only(x, x_aug, labels, get_cm=True if epoch % log_interval == 0 else False, epoch=epoch)
                 loss, pos_sim, neg_sim = model.loss_cal_rm_FP_only(x, x_aug, labels, get_cm=False, epoch=epoch)
+            elif args.mode == 'reweighted':
+                # loss, pos_sim, neg_sim = model.loss_cal_rm_FP_only(x, x_aug, labels, get_cm=True if epoch % log_interval == 0 else False, epoch=epoch)
+                loss, _ = model.loss_cal_reweighted(x, x_aug)
+                pos_sim, neg_sim = 0, 0
             else:
                raise RuntimeError(f"no mode matching {args.mode}, input should be: normal, cheated, rm_FN")
             
@@ -654,8 +714,8 @@ if __name__ == '__main__':
             # print(x_aug)
             oloss = odecay * l2_reg_ortho(model)
             loss_all += loss.item() * data.num_graphs
-            pos_sim_all += pos_sim.item()
-            neg_sim_all += neg_sim.item()
+            pos_sim_all += pos_sim.item() if args.mode != 'reweighted' else 0
+            neg_sim_all += neg_sim.item() if args.mode != 'reweighted' else 0
             if args.or_loss:
                 loss += oloss
             loss.backward()
