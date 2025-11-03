@@ -97,7 +97,7 @@ class GcnInfomax(nn.Module):
 
 
 class simclr(nn.Module):
-  def __init__(self, hidden_dim, num_gc_layers, alpha=0.5, beta=1., gamma=.1):
+  def __init__(self, hidden_dim, num_gc_layers, alpha=0.5, beta=1., gamma=.1, shuffle_DBN=False):
     super(simclr, self).__init__()
 
     self.alpha = alpha
@@ -108,8 +108,13 @@ class simclr(nn.Module):
     self.embedding_dim = mi_units = hidden_dim * num_gc_layers
     self.encoder = Encoder(dataset_num_features, hidden_dim, num_gc_layers)
 
-    self.proj_head = nn.Sequential(nn.Linear(self.embedding_dim, self.embedding_dim), nn.ReLU(inplace=True), nn.Linear(self.embedding_dim, self.embedding_dim))
-
+    bn_layer = [DecorrelatedShuffledBatchNorm1d(self.embedding_dim)] if shuffle_DBN else []
+    self.proj_head = nn.Sequential(
+        nn.Linear(self.embedding_dim, self.embedding_dim), 
+        *bn_layer,
+        nn.ReLU(inplace=True), 
+        nn.Linear(self.embedding_dim, self.embedding_dim)
+    )
     self.init_emb()
 
   def init_emb(self):
@@ -541,8 +546,10 @@ class simclr(nn.Module):
         # === neg pairs ===
         logit_neg = torch.log(W + eps) + sim_aa / T        # (B,B)
         log_denom = torch.logsumexp(logit_neg, dim=1)      # (B,)
+        pos_sim_ = sim_ab.diagonal().mean()
+        neg_sim_ = (sim_aa * W).sum(dim=1).mean()
 
-        return -(log_pos - log_denom).mean(), FN_matrix
+        return -(log_pos - log_denom).mean(), FN_matrix, pos_sim_, neg_sim_
 
 import random
 def setup_seed(seed):
@@ -560,7 +567,7 @@ if __name__ == '__main__':
     setup_seed(args.seed)
 
     # tensorboard
-    writer = SummaryWriter(log_dir=f'logs/KDE/200epochs_log_interval_10/{args.DS}/lr_{args.lr}/tensorboard_{args.similarity_measure}_{args.aug}_{args.mode}_{time.ctime(time.time())}_{args.or_loss}')
+    writer = SummaryWriter(log_dir=f'logs/KDE/200epochs_log_interval_10/{args.DS}/shuffled_DBN_{args.shuffle_DBN}/lr_{args.lr}/tensorboard_{args.similarity_measure}_{args.aug}_{args.mode}_{time.ctime(time.time())}_{args.or_loss}')
 
     accuracies = {'val':[], 'test':[]}
     epochs = args.epochs
@@ -588,7 +595,7 @@ if __name__ == '__main__':
     dataloader_eval = DataLoader(dataset_eval, batch_size=batch_size)
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model = simclr(args.hidden_dim, args.num_gc_layers).to(device)
+    model = simclr(args.hidden_dim, args.num_gc_layers, shuffle_DBN=args.shuffle_DBN).to(device)
     # print(model)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
@@ -685,8 +692,7 @@ if __name__ == '__main__':
                 loss, pos_sim, neg_sim = model.loss_cal_rm_FP_only(x, x_aug, labels, get_cm=False, epoch=epoch)
             elif args.mode == 'reweighted':
                 # loss, pos_sim, neg_sim = model.loss_cal_rm_FP_only(x, x_aug, labels, get_cm=True if epoch % log_interval == 0 else False, epoch=epoch)
-                loss, _ = model.loss_cal_reweighted(x, x_aug)
-                pos_sim, neg_sim = 0, 0
+                loss, _, pos_sim, neg_sim = model.loss_cal_reweighted(x, x_aug)
             else:
                raise RuntimeError(f"no mode matching {args.mode}, input should be: normal, cheated, rm_FN")
             
@@ -714,8 +720,8 @@ if __name__ == '__main__':
             # print(x_aug)
             oloss = odecay * l2_reg_ortho(model)
             loss_all += loss.item() * data.num_graphs
-            pos_sim_all += pos_sim.item() if args.mode != 'reweighted' else 0
-            neg_sim_all += neg_sim.item() if args.mode != 'reweighted' else 0
+            pos_sim_all += pos_sim.item()
+            neg_sim_all += neg_sim.item()
             if args.or_loss:
                 loss += oloss
             loss.backward()
@@ -743,8 +749,8 @@ if __name__ == '__main__':
         loss_list.append(loss_all / len(dataloader.dataset))
         if epoch % log_interval == 0:
             if args.plot_kde:
-                os.makedirs(f'KDE/{args.DS}/{args.mode}/{args.aug}/anchor', exist_ok=True)
-                os.makedirs(f'KDE/{args.DS}/{args.mode}/{args.aug}/graph_pos', exist_ok=True)
+                os.makedirs(f'KDE/{args.DS}/shuffled_DBN_{args.shuffle_DBN}/{args.mode}/{args.aug}/anchor', exist_ok=True)
+                os.makedirs(f'KDE/{args.DS}/shuffled_DBN_{args.shuffle_DBN}/{args.mode}/{args.aug}/graph_pos', exist_ok=True)
                 X_anchor = torch.cat(all_anchor_embeddings, dim=0).numpy()
                 y_anchor = torch.cat(all_anchor_labels, dim=0).numpy()
                 X_pos = torch.cat(all_pos_embeddings, dim=0).numpy()
@@ -758,13 +764,13 @@ if __name__ == '__main__':
                 plot_kde_unitcircle_kde(
                     X_anchor, y_anchor,
                     classes=None,
-                    save_path=f'KDE/{args.DS}/{args.mode}/{args.aug}/anchor/epoch_{epoch}_kde_unit_circle',
+                    save_path=f'KDE/{args.DS}/shuffled_DBN_{args.shuffle_DBN}/{args.mode}/{args.aug}/anchor/epoch_{epoch}_kde_unit_circle',
                     plot_scatter=True,
                 )
                 plot_kde_unitcircle_kde(
                     X_pos, y_pos,
                     classes=None,
-                    save_path=f'KDE/{args.DS}/{args.mode}/{args.aug}/graph_pos/epoch_{epoch}_kde_unit_circle',
+                    save_path=f'KDE/{args.DS}/shuffled_DBN_{args.shuffle_DBN}/{args.mode}/{args.aug}/graph_pos/epoch_{epoch}_kde_unit_circle',
                     plot_scatter=True,
                 )
 

@@ -67,3 +67,76 @@ class FF(nn.Module):
     def forward(self, x):
         return self.block(x) + self.linear_shortcut(x)
 
+
+class DecorrelatedShuffledBatchNorm1d(nn.Module):
+    """
+    Decorrelated and Shuffled Batch Normalization (DSBN).
+    Computes DBN statistics (Mean and Covariance Inverse) on a shuffled batch 
+    to prevent information leakage in contrastive learning.
+    """
+    def __init__(self, num_features, eps=1e-5, momentum=0.1, affine=True):
+        super().__init__()
+        self.num_features = num_features
+        self.eps = eps
+        self.momentum = momentum
+        self.affine = affine
+        
+        # Running Stats for Evaluation
+        self.register_buffer('running_mean', torch.zeros(num_features))
+        self.register_buffer('running_cov_sqrt_inv', torch.eye(num_features))
+        
+        # Learnable Parameters (Gamma/Weight, Beta/Bias)
+        if self.affine:
+            self.weight = nn.Parameter(torch.ones(num_features))
+            self.bias = nn.Parameter(torch.zeros(num_features))
+        else:
+            self.register_parameter('weight', None)
+            self.register_parameter('bias', None)
+
+    def forward(self, x):
+        # x shape: (B, D)
+        
+        if self.training:
+            # --- 1. Shuffling (for Decorrelation with respect to positive pairs) ---
+            batch_size = x.size(0)
+            perm = torch.randperm(batch_size, device=x.device)
+            x_shuffled = x[perm]
+            
+            # --- 2. DBN on Shuffled Batch (Compute Whitening Matrix) ---
+            
+            # Centering (Subtract Batch Mean of the shuffled batch)
+            mean = x_shuffled.mean(dim=0)
+            x_centered = x_shuffled - mean
+            
+            # Covariance Matrix (C)
+            B = x_shuffled.size(0)
+            # DBN's C is computed on the shuffled batch
+            cov_matrix = (x_centered.T @ x_centered) / B
+            
+            # Whitening: Compute Inverse Square Root of Covariance (C^{-1/2}) using SVD
+            U, S, _ = torch.svd(cov_matrix + self.eps * torch.eye(self.num_features, device=x.device))
+            S_inv_sqrt = torch.diag(1.0 / torch.sqrt(S))
+            cov_sqrt_inv = U @ S_inv_sqrt @ U.T
+            
+            # Decorrelation (Whitening)
+            x_whitened = x_centered @ cov_sqrt_inv
+            
+            # --- 3. Update Running Stats (Using Shuffled Stats) ---
+            with torch.no_grad():
+                self.running_mean.mul_(1 - self.momentum).add_(mean, alpha=self.momentum)
+                self.running_cov_sqrt_inv.mul_(1 - self.momentum).add_(cov_sqrt_inv, alpha=self.momentum)
+                
+            # --- 4. Restore Order ---
+            out = x_whitened[torch.argsort(perm)] # Normalize the feature i, but using shuffled stats
+            
+        else: # Evaluation mode (using running stats, no shuffling)
+            
+            x_centered = x - self.running_mean
+            x_whitened = x_centered @ self.running_cov_sqrt_inv
+            out = x_whitened
+        
+        # --- 5. Affine Transformation ---
+        if self.affine:
+            out = out * self.weight + self.bias
+            
+        return out

@@ -37,6 +37,7 @@ def arg_parse():
     parser.add_argument('--plot_theta_l2_distribution', action='store_true', help='Plot single anchor FP and FN distribution')
     parser.add_argument('--similarity_measure', type=str, default='cosine', help='Similarity measure to use for the model, options: cosine, l2, cosine+l2')
     parser.add_argument('--plot_kde', action='store_true', help='Plot KDE of angles')
+    parser.add_argument("--shuffle_DBN", action='store_true', help="Use shuffled DBN")
 
     return parser.parse_args()
 
