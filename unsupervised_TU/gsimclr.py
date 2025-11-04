@@ -551,6 +551,63 @@ class simclr(nn.Module):
 
         return -(log_pos - log_denom).mean(), FN_matrix, pos_sim_, neg_sim_
 
+  def reweighted_l2_loss(self, z_a, z_b, T=0.2, eps=1e-6, neg_aug=False): # Note: dist=True is now enforced for L2
+    
+    # z_a, z_b 是圖嵌入 (B, D)
+
+    # --- 1. L2 Distance Squared ---
+    # D_ab: z_a[i] vs z_b[j], D_aa: z_a[i] vs z_a[j]
+    D_ab_sq = torch.cdist(z_a, z_b, p=2).pow(2)  # (B, B)
+    if neg_aug:
+        D_aa_sq = D_ab_sq.clone()            # (B, B)
+        # D_ab_sq_full = torch.cdist(z_a, z_b, p=2).pow(2)
+    else:
+        D_aa_sq = torch.cdist(z_a, z_a, p=2).pow(2)  # (B, B)
+    
+    # pos_dist_sq: 正樣本對距離的平方 (B, 1)
+    pos_dist_sq = D_ab_sq.diagonal().unsqueeze(1) 
+
+    # --- 2. L2 Similarity (Sim_{L2} = exp(-D^2 / T)) ---
+    S_ab = torch.exp(-D_ab_sq / T) 
+    S_aa = torch.exp(-D_aa_sq / T) 
+    pos_sim = S_ab.diagonal() # S_i,i+ term (B,)
+    
+    # --- 3. False Negative (FN) / Reweighting Logic ---
+    
+    # FN 條件: 負樣本 z_a[j] 比正樣本 z_b[i] 更接近錨點 z_a[i] (距離小於)
+    # 由於我們只使用 L2 距離，且已將 dist 邏輯納入，因此簡化 FN 判斷
+    FN_matrix = D_aa_sq <= pos_dist_sq             # (B,B)
+    
+    # 將 FN 矩陣作為 false_mask (忽略 dist 和 neg_aug 複雜邏輯)
+    false_mask = FN_matrix 
+    false_mask.fill_diagonal_(False)               # 排除 i==i
+    
+    # reweighting
+    W = torch.full_like(S_aa, self.w_easy)         # Assume all easy
+    W[false_mask] = 0.0                            # reweight false negatives (W=0)
+    W.fill_diagonal_(0.0)                          # 確保 i==i 權重為 0
+
+    # === 4. Pos Pairs Loss Term ===
+    # log(S_i,i+)
+    log_pos = torch.log(pos_sim + eps)             # (B,)
+
+    # === 5. Neg Pairs Loss Term (logsumexp) ===
+    # logit_neg = log(W * S_aa) = log(W) + log(S_aa) = log(W) - D_aa_sq / T
+    log_W = torch.log(W + eps)
+    log_S_aa = -D_aa_sq / T
+    logit_neg = log_W + log_S_aa                   # (B,B)
+    
+    # log(sum_{j != i} exp(logit_neg))
+    # 由於 W[i,i] = 0，logsumexp 會自動排除對角線項
+    log_denom = torch.logsumexp(logit_neg, dim=1)  # (B,)
+
+    # === 6. Final Loss ===
+    # InfoNCE loss: - log(pos / denom) = - (log(pos) - log(denom))
+    pos_sim_ = pos_sim.mean()
+    neg_sim_ = (S_aa * W).sum(dim=1).mean()
+
+    return -(log_pos - log_denom).mean(), FN_matrix, pos_sim_, neg_sim_
+
 import random
 def setup_seed(seed):
 
@@ -693,6 +750,9 @@ if __name__ == '__main__':
             elif args.mode == 'reweighted':
                 # loss, pos_sim, neg_sim = model.loss_cal_rm_FP_only(x, x_aug, labels, get_cm=True if epoch % log_interval == 0 else False, epoch=epoch)
                 loss, _, pos_sim, neg_sim = model.loss_cal_reweighted(x, x_aug)
+            elif args.mode == 'reweighted_l2':
+                # loss, pos_sim, neg_sim = model.loss_cal_rm_FP_only(x, x_aug, labels, get_cm=True if epoch % log_interval == 0 else False, epoch=epoch)
+                loss, _, pos_sim, neg_sim = model.reweighted_l2_loss(x, x_aug)
             else:
                raise RuntimeError(f"no mode matching {args.mode}, input should be: normal, cheated, rm_FN")
             

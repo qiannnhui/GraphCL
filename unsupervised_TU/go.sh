@@ -1,4 +1,4 @@
-#!/bin/bash -ex
+#!/bin/bash -x
 # for DS in MUTAG DD PROTEINS IMDB-BINARY NCI1
 # do
 #   for AUG in none dnodes random3
@@ -10,11 +10,11 @@
 #   done
 # done
 
-for DS in MUTAG DD PROTEINS IMDB-BINARY NCI1 REDDIT-BINARY REDDIT-MULTI-5K COLLAB
+for DS in REDDIT-MULTI-5K COLLAB
 do
   for AUG in none dnodes random3
   do
-    for MODE in cheated normal reweighted rm_FN rm_FP
+    for MODE in cheated normal reweighted rm_FN rm_FP reweighted_l2
     do
         CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DS --lr 1e-4 --local --num-gc-layers 5 --aug $AUG --mode $MODE --log_interval 10 --epochs 200 --plot_kde --shuffle_DBN
     done
