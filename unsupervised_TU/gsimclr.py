@@ -347,6 +347,87 @@ class simclr(nn.Module):
             raise ValueError(f"Unsupported similarity measure: {similarity_measure}")
         
         return sim_matrix
+  
+
+  # 由於您沒有提供原始 simclr 類別，我們將假設這是 simclr 的方法
+  def _get_exp_indices(self, labels, batch_size, device):
+    """
+    為每個 Anchor z_i 找到一個實驗用的 Positive (FP) 和 Negatives (FN)。
+    
+    Args:
+        labels: 批次的真實標籤 (B, 1).
+    
+    Returns:
+        pos_indices (B,): 每個 Anchor 的 FP 樣本索引 (不同標籤的隨機樣本).
+        neg_mask (B, B): 每個 Anchor 的 FN 樣本掩碼 (相同標籤的所有其他樣本).
+    """
+    labels = labels.view(-1, 1)
+    
+    # 1. 構建 FP 樣本索引 (隨機選擇一個不同標籤的樣本)
+    fp_indices = torch.zeros(batch_size, dtype=torch.long, device=device)
+    
+    for i in range(batch_size):
+        # 找出所有不同標籤的樣本索引
+        diff_label_indices = (labels != labels[i]).nonzero(as_tuple=True)[0]
+        
+        if diff_label_indices.numel() > 0:
+            # 隨機挑選一個不同標籤的索引
+            rand_idx = torch.randint(0, diff_label_indices.numel(), (1,), device=device)
+            fp_indices[i] = diff_label_indices[rand_idx]
+        else:
+            # 如果 batch 內所有標籤都相同 (罕見)，則使用自身 (將導致 log(0) 或 NaN，但在 large batch 下應避免)
+            fp_indices[i] = i 
+
+    # 2. 構建 FN 樣本掩碼 (相同標籤的所有其他樣本)
+    pos_mask_all = labels.eq(labels.T) # (B, B)
+    neg_mask = pos_mask_all & ~torch.diag(torch.ones(batch_size, device=device, dtype=torch.bool))
+    
+    return fp_indices, neg_mask
+
+  def loss_cal_FN_FP(self, x, x_aug, labels=None, get_cm=False, epoch=None, FN=True, FP=True, FP_all=False):
+    '''極端的case看看FN, FP是否真的對結果造成很大的影響'''
+
+    T = 0.2
+    batch_size, _ = x.size()
+    x_abs = x.norm(dim=1)
+    x_aug_abs = x_aug.norm(dim=1)
+
+    # Note: 由於 x_aug 應該是 x 的複製，我們使用 x 和 x_aug_T
+    cos_sim_matrix = torch.einsum('ik,jk->ij', x, x_aug) / torch.einsum('i,j->ij', x_abs, x_aug_abs)
+    sim_matrix = torch.exp(cos_sim_matrix / T)
+
+    fp_indices, neg_mask = self._get_exp_indices(labels, batch_size, x.device)
+
+    # === 1. 分子 (Positive Sim - 使用 FP 樣本) ===
+    # 這裡的 fp_indices 是 z_j 的索引，所以我們從 sim_matrix 中取出 z_i 對應 z_j 的相似度
+    if FP:
+        fp_sim = sim_matrix[range(batch_size), fp_indices] # (B,)
+    elif not FP:
+        fp_sim = sim_matrix[range(batch_size), range(batch_size)]
+
+    if FP_all:
+        labels = labels.view(-1, 1)
+        pos_mask = labels.eq(labels.T)
+        pos_sim = sim_matrix * pos_mask
+        fp_sim = pos_sim.sum(dim=1) - sim_matrix.diag()
+
+    # === 2. 分母 (Negative Sim - 相同標籤的所有其他樣本) ===
+    # neg_mask 已經是相同標籤但排除自身的掩碼
+    if FN:
+        neg_sim_sum = (sim_matrix * neg_mask).sum(dim=1) # (B,)
+    elif not FN:
+        neg_sim_sum = sim_matrix.sum(dim=1) - sim_matrix.diag()
+
+    # === 3. 損失計算 (Logit = FP / Negatives) ===
+    # 這是 InfoNCE 的形式，但 FP 位於分子，Negatives 位於分母
+    loss = fp_sim / (neg_sim_sum + 1e-8)
+    loss = -torch.log(loss + 1e-8).mean()
+    
+    pos_sim_ = fp_sim.mean()
+    neg_sim_ = neg_sim_sum.mean()
+
+    return loss, pos_sim_, neg_sim_
+
 
   def loss_cal(self, x, x_aug, labels, get_cm=False, epoch=None):
 
@@ -754,6 +835,16 @@ if __name__ == '__main__':
             elif args.mode == 'reweighted_l2':
                 # loss, pos_sim, neg_sim = model.loss_cal_rm_FP_only(x, x_aug, labels, get_cm=True if epoch % log_interval == 0 else False, epoch=epoch)
                 loss, _, pos_sim, neg_sim = model.reweighted_l2_loss(x, x_aug)
+            elif args.mode == 'with_FNFP':
+                loss, pos_sim, neg_sim = model.loss_cal_FN_FP(x, x_aug, labels, FN=True, FP=True)
+            elif args.mode == 'with_FN_only':
+                loss, pos_sim, neg_sim = model.loss_cal_FN_FP(x, x_aug, labels, FN=True, FP=False)
+            elif args.mode == 'with_FP_only':
+                loss, pos_sim, neg_sim = model.loss_cal_FN_FP(x, x_aug, labels, FN=False, FP=True)
+            elif args.mode == 'with_all_FP':
+                loss, pos_sim, neg_sim = model.loss_cal_FN_FP(x, x_aug, labels, FN=True, FP_all=True)
+            elif args.mode == 'with_FP_all_only':
+                loss, pos_sim, neg_sim = model.loss_cal_FN_FP(x, x_aug, labels, FN=False, FP_all=True)
             else:
                raise RuntimeError(f"no mode matching {args.mode}, input should be: normal, cheated, rm_FN")
             
