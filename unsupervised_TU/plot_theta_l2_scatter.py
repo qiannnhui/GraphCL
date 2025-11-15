@@ -60,7 +60,7 @@ def plot_theta_l2(x, x_aug, labels=None):
 
 
 def plot_theta_l2_epoch(all_pos_l2, all_pos_theta, all_neg_l2, all_neg_theta, real_pos_l2=None, real_pos_theta=None,
-                        real_neg_l2=None, real_neg_theta=None, args=None, epoch=None, similarity_measure="cosine"):
+                        real_neg_l2=None, real_neg_theta=None, args=None, epoch=None, similarity_measure="cosine", save_dir=None):
         """
         Plot theta vs l2 norm for all accumulated data
         """
@@ -135,9 +135,11 @@ def plot_theta_l2_epoch(all_pos_l2, all_pos_theta, all_neg_l2, all_neg_theta, re
         plt.legend(fontsize=fontsize)
 
         # Save the figure with all plots
-        os.makedirs(f'./logs/theta_vs_l2/{args.DS}/lr_{args.lr}/{similarity_measure}', exist_ok=True)
+        if save_dir is None:
+             save_dir = f'./logs/theta_vs_l2/{args.DS}/lr_{args.lr}'
+        os.makedirs(f'{save_dir}/{similarity_measure}', exist_ok=True)
         plt.tight_layout()  # Makes sure everything fits without overlap
-        plt.savefig(f'./logs/theta_vs_l2/{args.DS}/lr_{args.lr}/{similarity_measure}/epoch_{epoch}_theta_vs_l2_{args.aug}.png')
+        plt.savefig(f'{save_dir}/{similarity_measure}/epoch_{epoch}_theta_vs_l2_{args.aug}.png')
         plt.close()  # Close the figure to free memory
 
         return result

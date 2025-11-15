@@ -10,13 +10,13 @@
 #   done
 # done
 
-for DS in REDDIT-MULTI-5K COLLAB
+for DS in MUTAG DD IMDB-BINARY NCI1 REDDIT-BINARY PROTEINS REDDIT-MULTI-5K COLLAB
 do
   for AUG in none dnodes random3
   do
     for MODE in cheated normal reweighted rm_FN rm_FP reweighted_l2
     do
-        CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DS --lr 1e-4 --local --num-gc-layers 5 --aug $AUG --mode $MODE --log_interval 10 --epochs 200 --plot_kde --shuffle_DBN
+        CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DS --lr 1e-4 --local --num-gc-layers 5 --aug $AUG --mode $MODE --log_interval 10 --epochs 200
     done
   done
 done

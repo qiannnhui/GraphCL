@@ -38,72 +38,73 @@ from plot_theta_l2_scatter import plot_theta_l2, plot_theta_l2_epoch
 from plot_single_anchor_FP_FN_distribution import plot_theta_l2_distribution
 from plot_tsne import visualize_embeddings
 from plot_KDE import plot_kde_unitcircle_kde
+from make_save_dir import make_save_dir # 引入創建儲存目錄的函數
+from save_load_ckpts import load_checkpoint, save_checkpoint # 引入檢查點函數
 
-class GcnInfomax(nn.Module):
-  def __init__(self, hidden_dim, num_gc_layers, alpha=0.5, beta=1., gamma=.1):
-    super(GcnInfomax, self).__init__()
+# class GcnInfomax(nn.Module):
+#   def __init__(self, hidden_dim, num_gc_layers, alpha=0.5, beta=1., gamma=.1):
+#     super(GcnInfomax, self).__init__()
 
-    self.alpha = alpha
-    self.beta = beta
-    self.gamma = gamma
-    self.prior = args.prior
+#     self.alpha = alpha
+#     self.beta = beta
+#     self.gamma = gamma
+#     self.prior = args.prior
 
-    self.embedding_dim = mi_units = hidden_dim * num_gc_layers
-    self.encoder = Encoder(dataset_num_features, hidden_dim, num_gc_layers)
+#     self.embedding_dim = mi_units = hidden_dim * num_gc_layers
+#     self.encoder = Encoder(dataset_num_features, hidden_dim, num_gc_layers)
 
-    self.local_d = FF(self.embedding_dim)
-    self.global_d = FF(self.embedding_dim)
-    # self.local_d = MI1x1ConvNet(self.embedding_dim, mi_units)
-    # self.global_d = MIFCNet(self.embedding_dim, mi_units)
+#     self.local_d = FF(self.embedding_dim)
+#     self.global_d = FF(self.embedding_dim)
+#     # self.local_d = MI1x1ConvNet(self.embedding_dim, mi_units)
+#     # self.global_d = MIFCNet(self.embedding_dim, mi_units)
 
-    if self.prior:
-        self.prior_d = PriorDiscriminator(self.embedding_dim)
+#     if self.prior:
+#         self.prior_d = PriorDiscriminator(self.embedding_dim)
 
-    self.init_emb()
+#     self.init_emb()
 
-  def init_emb(self):
-    initrange = -1.5 / self.embedding_dim
-    for m in self.modules():
-        if isinstance(m, nn.Linear):
-            torch.nn.init.xavier_uniform_(m.weight.data)
-            if m.bias is not None:
-                m.bias.data.fill_(0.0)
+#   def init_emb(self):
+#     initrange = -1.5 / self.embedding_dim
+#     for m in self.modules():
+#         if isinstance(m, nn.Linear):
+#             torch.nn.init.xavier_uniform_(m.weight.data)
+#             if m.bias is not None:
+#                 m.bias.data.fill_(0.0)
 
 
-  def forward(self, x, edge_index, batch, num_graphs):
+#   def forward(self, x, edge_index, batch, num_graphs):
 
-    # batch_size = data.num_graphs
-    if x is None:
-        x = torch.ones(batch.shape[0]).to(device)
+#     # batch_size = data.num_graphs
+#     if x is None:
+#         x = torch.ones(batch.shape[0]).to(device)
 
-    y, M = self.encoder(x, edge_index, batch)
+#     y, M = self.encoder(x, edge_index, batch)
     
-    g_enc = self.global_d(y)
-    l_enc = self.local_d(M)
+#     g_enc = self.global_d(y)
+#     l_enc = self.local_d(M)
 
-    mode='fd'
-    measure='JSD'
-    local_global_loss = local_global_loss_(l_enc, g_enc, edge_index, batch, measure)
+#     mode='fd'
+#     measure='JSD'
+#     local_global_loss = local_global_loss_(l_enc, g_enc, edge_index, batch, measure)
  
-    if self.prior:
-        prior = torch.rand_like(y)
-        term_a = torch.log(self.prior_d(prior)).mean()
-        term_b = torch.log(1.0 - self.prior_d(y)).mean()
-        PRIOR = - (term_a + term_b) * self.gamma
-    else:
-        PRIOR = 0
+#     if self.prior:
+#         prior = torch.rand_like(y)
+#         term_a = torch.log(self.prior_d(prior)).mean()
+#         term_b = torch.log(1.0 - self.prior_d(y)).mean()
+#         PRIOR = - (term_a + term_b) * self.gamma
+#     else:
+#         PRIOR = 0
     
-    return local_global_loss + PRIOR
+#     return local_global_loss + PRIOR
 
 
 class simclr(nn.Module):
-  def __init__(self, hidden_dim, num_gc_layers, alpha=0.5, beta=1., gamma=.1, shuffle_DBN=False):
+  def __init__(self, hidden_dim, num_gc_layers, alpha=0.5, beta=1., gamma=.1, shuffle_DBN=False, dataset_num_features=1):
     super(simclr, self).__init__()
 
     self.alpha = alpha
     self.beta = beta
     self.gamma = gamma
-    self.prior = args.prior
 
     self.embedding_dim = mi_units = hidden_dim * num_gc_layers
     self.encoder = Encoder(dataset_num_features, hidden_dim, num_gc_layers)
@@ -136,7 +137,7 @@ class simclr(nn.Module):
     
     y = self.proj_head(y)
     
-    return y
+    return y, M
 
   def min_max_normalization(self, sim_matrix):
       
@@ -622,9 +623,15 @@ if __name__ == '__main__':
     
     args = arg_parse()
     setup_seed(args.seed)
-
+    save_dir = make_save_dir(
+        base="./result/GCL",
+        args=args,
+    )
+    os.makedirs(f'{save_dir}', exist_ok=True)
+    ckpt_filename = f'{save_dir}/ckpts.pth.tar'
+    best_val_acc = 0.0
     # tensorboard
-    writer = SummaryWriter(log_dir=f'logs/KDE/200epochs_log_interval_10/{args.DS}/shuffled_DBN_{args.shuffle_DBN}/lr_{args.lr}/tensorboard_{args.similarity_measure}_{args.aug}_{args.mode}_{time.ctime(time.time())}_{args.or_loss}')
+    writer = SummaryWriter(log_dir=f'{save_dir}/tensorboard_{time.ctime(time.time())}_{args.or_loss}')
 
     accuracies = {'val':[], 'test':[]}
     epochs = args.epochs
@@ -652,10 +659,16 @@ if __name__ == '__main__':
     dataloader_eval = DataLoader(dataset_eval, batch_size=batch_size)
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model = simclr(args.hidden_dim, args.num_gc_layers, shuffle_DBN=args.shuffle_DBN).to(device)
+    model = simclr(args.hidden_dim, args.num_gc_layers, shuffle_DBN=args.shuffle_DBN, dataset_num_features=dataset_num_features).to(device)
     # print(model)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-
+    
+    start_epoch, best_test_acc = load_checkpoint(
+        ckpt_filename, 
+        model, 
+        optimizer, 
+        device
+    )
     print('================')
     print('lr: {}'.format(lr))
     print('num_features: {}'.format(dataset_num_features))
@@ -673,7 +686,7 @@ if __name__ == '__main__':
     accuracies['test'].append(acc)
     """
 
-    for epoch in range(0, epochs+1):
+    for epoch in range(start_epoch, epochs+1):
         loss_all = 0
         pos_sim_all = 0
         neg_sim_all = 0
@@ -704,7 +717,7 @@ if __name__ == '__main__':
             
             node_num, _ = data.x.size()
             data = data.to(device)
-            x = model(data.x, data.edge_index, data.batch, data.num_graphs)
+            x, _ = model(data.x, data.edge_index, data.batch, data.num_graphs)
 
             if args.aug == 'dnodes' or args.aug == 'subgraph' or args.aug == 'random2' or args.aug == 'random3' or args.aug == 'random4':
                 # node_num_aug, _ = data_aug.x.size()
@@ -722,19 +735,7 @@ if __name__ == '__main__':
 
             data_aug = data_aug.to(device)
 
-            '''
-            print(data.edge_index)
-            print(data.edge_index.size())
-            print(data_aug.edge_index)
-            print(data_aug.edge_index.size())
-            print(data.x.size())
-            print(data_aug.x.size())
-            print(data.batch.size())
-            print(data_aug.batch.size())
-            pdb.set_trace()
-            '''
-
-            x_aug = model(data_aug.x, data_aug.edge_index, data_aug.batch, data_aug.num_graphs)
+            x_aug, _ = model(data_aug.x, data_aug.edge_index, data_aug.batch, data_aug.num_graphs)
             if args.mode == 'normal':
                 # loss, pos_sim, neg_sim = model.loss_cal_normal(x, x_aug, labels=labels, get_cm=True if epoch % log_interval == 0 else False, epoch=epoch)
                 loss, pos_sim, neg_sim = model.loss_cal_normal(x, x_aug, labels=labels, get_cm=False, epoch=epoch)
@@ -809,8 +810,8 @@ if __name__ == '__main__':
         loss_list.append(loss_all / len(dataloader.dataset))
         if epoch % log_interval == 0:
             if args.plot_kde:
-                os.makedirs(f'KDE/{args.DS}/shuffled_DBN_{args.shuffle_DBN}/{args.mode}/{args.aug}/anchor', exist_ok=True)
-                os.makedirs(f'KDE/{args.DS}/shuffled_DBN_{args.shuffle_DBN}/{args.mode}/{args.aug}/graph_pos', exist_ok=True)
+                os.makedirs(f'{save_dir}/KDE/anchor', exist_ok=True)
+                os.makedirs(f'{save_dir}/KDE/graph_pos', exist_ok=True)
                 X_anchor = torch.cat(all_anchor_embeddings, dim=0).numpy()
                 y_anchor = torch.cat(all_anchor_labels, dim=0).numpy()
                 X_pos = torch.cat(all_pos_embeddings, dim=0).numpy()
@@ -824,13 +825,13 @@ if __name__ == '__main__':
                 plot_kde_unitcircle_kde(
                     X_anchor, y_anchor,
                     classes=None,
-                    save_path=f'KDE/{args.DS}/shuffled_DBN_{args.shuffle_DBN}/{args.mode}/{args.aug}/anchor/epoch_{epoch}_kde_unit_circle',
+                    save_path=f'{save_dir}/KDE/anchor/epoch_{epoch}_kde_unit_circle',
                     plot_scatter=True,
                 )
                 plot_kde_unitcircle_kde(
                     X_pos, y_pos,
                     classes=None,
-                    save_path=f'KDE/{args.DS}/shuffled_DBN_{args.shuffle_DBN}/{args.mode}/{args.aug}/graph_pos/epoch_{epoch}_kde_unit_circle',
+                    save_path=f'{save_dir}/KDE/graph_pos/epoch_{epoch}_kde_unit_circle',
                     plot_scatter=True,
                 )
 
@@ -851,7 +852,7 @@ if __name__ == '__main__':
 
             if args.plot_theta_l2 and epoch % 50 == 0:
                 result = plot_theta_l2_epoch(all_pos_l2, all_pos_theta, all_neg_l2, all_neg_theta, all_real_pos_l2,
-                                             all_real_pos_theta, all_real_neg_l2, all_real_neg_theta, args=args, epoch=epoch)
+                                             all_real_pos_theta, all_real_neg_l2, all_real_neg_theta, args=args, epoch=epoch, save_dir=save_dir)
             model.eval()
             emb, y = model.encoder.get_embeddings(dataloader_eval)
             # visualize_embeddings(emb, y, args, epoch, method="t-SNE")
@@ -859,6 +860,16 @@ if __name__ == '__main__':
             # singular_values = check_dimensional_collapse(emb)
             # for i, value in enumerate(singular_values):
             #     writer.add_scalar(f'Singular_Values/{epoch}_{args.DS}', np.log10(value), i)
+            if acc_val > best_val_acc:
+                best_val_acc = acc_val
+                best_epoch = epoch
+                save_checkpoint(
+                    epoch, 
+                    model, 
+                    optimizer, 
+                    acc, # 保存測試準確度
+                    ckpt_filename
+                )
 
             accuracies['val'].append(acc_val)
             accuracies['test'].append(acc)
@@ -866,15 +877,7 @@ if __name__ == '__main__':
             writer.add_scalar('Accuracy/val', acc_val, epoch)
             writer.add_scalar('Accuracy/test', acc, epoch)
 
-    tpe  = ('local' if args.local else '') + ('prior' if args.prior else '')
-    if not os.path.exists("./logs"):
-        os.makedirs("./logs")
-    if not os.path.exists("./logs/GCL"):
-        os.makedirs("./logs/GCL")
-    if not os.path.exists(f"./logs/GCL/{args.DS}"):
-        os.makedirs(f"./logs/GCL/{args.DS}")
-
-    with open((f'./logs/GCL/{args.DS}/{args.DS}_{aug_ratio}_'+str(args.seed)), 'a+') as f:
+    with open((f'{save_dir}/{aug_ratio}_'+str(args.seed)), 'a+') as f:
         s1 = json.dumps(stage_finish_epochs)
         s2 = json.dumps(loss_list)
         s3 = json.dumps(accuracies)
