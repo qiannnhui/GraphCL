@@ -1,5 +1,5 @@
 **/KDE
 **/DD
 **/logs
-**/results
-**/result
+**/results/**
+**/result/**
