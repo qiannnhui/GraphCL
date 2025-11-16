@@ -735,8 +735,20 @@ class simclr(nn.Module):
         # ==== 選擇 A: 稀疏負樣本 (模擬極端 InfoNCE) ====
         
         # 1. 分子 (Positive Sim): 隨機選擇一個同標籤但非自身的樣本
-        pos_indices, _ = self._get_exp_indices(labels, batch_size, x.device)
-        fp_sim = sim_matrix[range(batch_size), pos_indices] # (B,)
+        pos_indices = torch.zeros(batch_size, dtype=torch.long, device=x.device)
+        for i in range(batch_size):
+            # 找出所有真正的正樣本 (同標籤且非自身)
+            true_pos_indices = (labels.eq(labels[i]) & ~torch.diag(torch.ones(batch_size, device=x.device, dtype=torch.bool))).nonzero(as_tuple=True)[0]
+            
+            if true_pos_indices.numel() > 0:
+                # 隨機挑選一個真正的正樣本
+                rand_idx = torch.randint(0, true_pos_indices.numel(), (1,), device=x.device)
+                pos_indices[i] = true_pos_indices[rand_idx]
+            else:
+                # 如果 batch 內沒有其他同類樣本，則使用自身 (這是回退，不理想)
+                pos_indices[i] = i 
+
+        fp_sim = sim_matrix[range(batch_size), pos_indices] # (B,)        
         
         # 2. 分母 (Negative Sim): 隨機採樣兩個真正的負樣本 (不同標籤)
         neg_mask = self._sample_negative_mask(labels, batch_size, x.device, num_negatives=2)
