@@ -348,6 +348,27 @@ class simclr(nn.Module):
         
         return sim_matrix
   
+  def _sample_negative_mask(self, labels, batch_size, device, num_negatives=2):
+    """
+    為每個 Anchor 隨機採樣 num_negatives 個真正的負樣本 (不同標籤) 作為分母。
+    """
+    labels = labels.view(-1, 1)
+    neg_mask = torch.zeros((batch_size, batch_size), dtype=torch.bool, device=device)
+    
+    for i in range(batch_size):
+        # 找出所有真正的負樣本 (不同標籤)
+        true_neg_indices = (labels != labels[i]).nonzero(as_tuple=True)[0]
+        
+        if true_neg_indices.numel() > 0:
+            # 隨機採樣 num_negatives 個索引 (或所有可用的負樣本，如果少於 num_negatives)
+            num_to_sample = min(num_negatives, true_neg_indices.numel())
+            
+            # 確保採樣是唯一的
+            if num_to_sample > 0:
+                sampled_indices = true_neg_indices[torch.randperm(true_neg_indices.numel())[:num_to_sample]]
+                neg_mask[i, sampled_indices] = True
+        
+    return neg_mask
 
   # 由於您沒有提供原始 simclr 類別，我們將假設這是 simclr 的方法
   def _get_exp_indices(self, labels, batch_size, device):
@@ -689,6 +710,110 @@ class simclr(nn.Module):
     neg_sim_ = (S_aa * W).sum(dim=1).mean()
 
     return -(log_pos - log_denom).mean(), FN_matrix, pos_sim_, neg_sim_
+  
+  def loss_cal_custom_sampling(self, x, x_aug, labels=None, get_cm=False, epoch=None, mode='sparse_neg'):
+    """
+    實現兩種客製化採樣模式的 InfoNCE 損失。
+    
+    Args:
+        mode ('sparse_neg' or 'random_pos'):
+            'sparse_neg': 分子為真正樣本，分母為兩個隨機真負樣本。
+            'random_pos': 分子為隨機一半樣本，分母為剩餘一半樣本。
+    """
+    T = 0.2
+    batch_size, _ = x.size()
+    
+    # --- 相似度計算 ---
+    x_abs = x.norm(dim=1)
+    x_aug_abs = x_aug.norm(dim=1)
+    cos_sim_matrix = torch.einsum('ik,jk->ij', x, x_aug) / torch.einsum('i,j->ij', x_abs, x_aug_abs)
+    sim_matrix = torch.exp(cos_sim_matrix / T)
+    
+    labels = labels.view(-1, 1)
+    
+    if mode == 'sparse_neg':
+        # ==== 選擇 A: 稀疏負樣本 (模擬極端 InfoNCE) ====
+        
+        # 1. 分子 (Positive Sim): 隨機選擇一個同標籤但非自身的樣本
+        pos_indices, _ = self._get_exp_indices(labels, batch_size, x.device)
+        fp_sim = sim_matrix[range(batch_size), pos_indices] # (B,)
+        
+        # 2. 分母 (Negative Sim): 隨機採樣兩個真正的負樣本 (不同標籤)
+        neg_mask = self._sample_negative_mask(labels, batch_size, x.device, num_negatives=2)
+        
+        # 計算分母總和
+        neg_sim_sum = (sim_matrix * neg_mask).sum(dim=1) # (B,)
+        
+    elif mode == 'random_pos':
+        # ==== 選擇 B: 隨機分子 (隨機選擇一半作為 Positive Pairs) ====
+        
+        # 1. 隨機分數矩陣
+        # 創建一個與 sim_matrix 大小相同的隨機分數，用於獨立排序
+        # 這張分數矩陣的每一行都會被獨立地用來決定哪些是 Positives
+        random_scores = torch.rand((batch_size, batch_size), device=x.device)
+        
+        # 2. 計算分割點 (約 N/2)
+        split_count = batch_size // 2
+        
+        # 3. 獲取 Positives Set (分子) 的掩碼
+        # 對每一行獨立地找出分數最高的 split_count 個索引
+        # argsort() 進行排序，[-split_count:] 獲取最大的 N/2 個索引
+        
+        # 獲取排序後的索引 (從最小到最大)
+        sorted_indices = torch.argsort(random_scores, dim=1)
+        
+        # 找出作為 Positives 的 N/2 個索引 (分數最大的 N/2 個)
+        pos_indices_for_each_row = sorted_indices[:, -split_count:] # (B, split_count)
+        
+        # 構建 Positives Mask (pos_mask)
+        pos_mask = torch.zeros((batch_size, batch_size), dtype=torch.bool, device=x.device)
+        
+        # 使用 scatter_ 設置掩碼：對於每一行 i，將 pos_indices_for_each_row[i] 對應的列設置為 True
+        # 這一步實現了：pos_mask[i, j] = True 如果 j 被 Anchor i 隨機選為 Positives
+        pos_mask.scatter_(dim=1, index=pos_indices_for_each_row, src=torch.ones_like(pos_indices_for_each_row, dtype=torch.bool))
+
+        # 4. 構建 Negatives Set (分母) 的掩碼
+        # Negatives Set 就是 Positives Set 之外的所有樣本
+        # neg_mask = ~pos_mask
+        
+        # 5. 清理對角線 (防止 Self-Similarity 被錯誤地計入分子或分母)
+        # 通常 InfoNCE 的分子是 Positives Set，分母是 Positives Set 之外的所有樣本
+        # 由於您明確要求分子是 Positives Set 且分母是 Negatives Set，我們需要清理對角線，確保 i 和 i+ 是互斥的。
+        
+        # 清理對角線 (i vs i)：InfoNCE 的分子/分母通常都不包含 i vs i
+        diag_mask = torch.diag(torch.ones(batch_size, device=x.device, dtype=torch.bool))
+        
+        # 確保對角線在分子和分母中都為 False
+        pos_mask = pos_mask & ~diag_mask 
+        # neg_mask = neg_mask & ~diag_mask 
+
+        # 6. 計算分子和分母總和
+        
+        # 分子 (Positive Sim Sum): Anchor i 對其 Positives Set 的總和
+        fp_sim = (sim_matrix * pos_mask).sum(dim=1) # (B,)
+        # random_indices = torch.randint(0, batch_size, (batch_size,), device=x.device)
+        # fp_sim = sim_matrix[range(batch_size), random_indices] # (B,)
+        
+        # 分母 (Negative Sim): 批次中剩餘的所有樣本 (Total - Random Pos)
+        # 由於 random_indices 可能是重複的，我們使用掩碼來保證正確的總和
+        
+        # 構建分母掩碼 (排除 Random Pos)
+        neg_mask = torch.ones((batch_size, batch_size), dtype=torch.bool, device=x.device)
+        # neg_mask[range(batch_size), random_indices] = False # 排除分子項
+        
+        neg_sim_sum = (sim_matrix * neg_mask).sum(dim=1) # (B,)
+        
+    else:
+        raise ValueError("Invalid mode. Must be 'sparse_neg' or 'random_pos'.")
+
+    # === 3. 損失計算 ===
+    loss = fp_sim / (neg_sim_sum + 1e-8)
+    loss = -torch.log(loss + 1e-8).mean()
+    
+    pos_sim_ = fp_sim.mean()
+    neg_sim_ = neg_sim_sum.mean()
+
+    return loss, pos_sim_, neg_sim_
 
 import random
 def setup_seed(seed):
@@ -845,6 +970,10 @@ if __name__ == '__main__':
                 loss, pos_sim, neg_sim = model.loss_cal_FN_FP(x, x_aug, labels, FN=True, FP_all=True)
             elif args.mode == 'with_FP_all_only':
                 loss, pos_sim, neg_sim = model.loss_cal_FN_FP(x, x_aug, labels, FN=False, FP_all=True)
+            elif args.mode == 'sparse_neg':
+                loss, pos_sim, neg_sim = model.loss_cal_custom_sampling(x, x_aug, labels, mode='sparse_neg')
+            elif args.mode == 'random_pos':
+                loss, pos_sim, neg_sim = model.loss_cal_custom_sampling(x, x_aug, labels, mode='random_pos')
             else:
                raise RuntimeError(f"no mode matching {args.mode}, input should be: normal, cheated, rm_FN")
             
