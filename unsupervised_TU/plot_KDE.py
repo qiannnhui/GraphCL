@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 from math import ceil
 from typing import Optional, Sequence, Tuple, Union
 from matplotlib.colors import PowerNorm, Normalize
+import os
 
 # -------- 輔助：容忍 torch / CUDA 張量 --------
 def _to_numpy(x):
@@ -39,6 +40,48 @@ def _pca_2d(X: np.ndarray) -> np.ndarray:
     # SVD full => deterministic
     U, S, Vt = np.linalg.svd(Xc, full_matrices=False)
     return Xc @ Vt[:2].T
+
+def _umap_2d(X: np.ndarray) -> np.ndarray:
+    try:
+        from umap import UMAP
+    except ImportError:
+        print("UMAP required. Please install with 'pip install umap-learn'. Falling back to PCA.")
+        return _pca_2d(X)
+        
+    X = np.asarray(X, dtype=float)
+    if X.shape[1] <= 2:
+        return X
+
+    # 建議：先用 PCA 預降維到 50 維，以提高 UMAP 穩定性和速度
+    if X.shape[1] > 50:
+        from sklearn.decomposition import PCA
+        X = PCA(n_components=50, random_state=42).fit_transform(X)
+        
+    # UMAP 參數通常需要調整，這裡使用通用設置
+    reducer = UMAP(n_components=2, random_state=42, n_neighbors=15, min_dist=0.1)
+    return reducer.fit_transform(X)
+
+# -------- t-SNE 降到 2D --------
+def _tsne_2d(X: np.ndarray) -> np.ndarray:
+    try:
+        from sklearn.manifold import TSNE
+        from sklearn.decomposition import PCA
+    except ImportError:
+        print("TSNE required. Please install scikit-learn. Falling back to PCA.")
+        return _pca_2d(X)
+        
+    X = np.asarray(X, dtype=float)
+    if X.shape[1] <= 2:
+        return X
+
+    # 建議：先用 PCA 預降維到 50 維，以提高 t-SNE 穩定性和速度
+    if X.shape[1] > 50:
+        X = PCA(n_components=50, random_state=42).fit_transform(X)
+
+    # t-SNE 參數通常需要調整，這裡使用通用設置
+    # 注意：t-SNE 對大型數據集非常慢
+    tsne = TSNE(n_components=2, random_state=42, perplexity=30, n_iter=300)
+    return tsne.fit_transform(X)
 
 # -------- 單位圓投影 + 角度 --------
 def _unit_and_theta(X2: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
@@ -142,6 +185,7 @@ def plot_kde_unitcircle_kde(
     save_path: Optional[str] = None,
     show: bool = True,
     plot_scatter: bool = False,
+    reduction_method: str = "pca", # <--- 新增參數, 可選 "pca", "umap", "tsne"
 ):
     """
     X: (N,D) embeddings；y: (N,) 整數或可 hash 的標籤（None 時只畫 Overall）。
@@ -149,16 +193,32 @@ def plot_kde_unitcircle_kde(
     sigma_r: 圓環厚度（徑向高斯的標準差）
     kde_bw: KDE 的 bandwidth（None=自動）
     """
+    if save_path is None:
+        save_path = f"./{reduction_method}/embedding_kde_unit_circle.png"
+    os.makedirs(save_path.rsplit("/", 1)[0], exist_ok=True)
+
     X = _to_numpy(X)
-    X2 = _pca_2d(X)
+    # X2 = _pca_2d(X)
+    if reduction_method == "umap":
+        X2 = _umap_2d(X)
+        method_name = "UMAP"
+    elif reduction_method == "tsne":
+        X2 = _tsne_2d(X)
+        method_name = "t-SNE"
+    elif reduction_method == "pca":
+        X2 = _pca_2d(X)
+        method_name = "PCA"
+    else:
+        raise ValueError(f"Unknown reduction method: {reduction_method}. Choose 'pca', 'umap', or 'tsne'.")
     U, theta_all = _unit_and_theta(X2)
     if plot_scatter:
-        scatter_path = save_path.replace("_kde_unit_circle", "_2d_scatter")
-        plot_embedding_scatter(X2, y=y, save_path=scatter_path)
+        scatter_path = save_path.replace("_kde_unit_circle", f"_{method_name.lower()}_scatter")
+        plot_embedding_scatter(X2, y=y, title=f"Embedding Scatter ({method_name})", save_path=scatter_path)
 
     # 先做 Overall
     t_grid_all, dens_all = _kde_theta(theta_all, grid_bins=theta_bins, bw=kde_bw)
     img_overall = _ring_image(t_grid_all, dens_all, img_size=img_size, sigma_r=sigma_r)
+    overall_title = f"{method_name} - {overall_title}"
 
     panels = [(overall_title, img_overall)]
 
@@ -212,8 +272,7 @@ def plot_kde_unitcircle_kde(
             k += 1
 
     plt.tight_layout()
-    if save_path is not None:
-        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+    plt.savefig(save_path, dpi=300, bbox_inches="tight")
     if show:
         plt.show()
     plt.close(fig)

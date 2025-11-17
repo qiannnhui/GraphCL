@@ -1057,14 +1057,16 @@ if __name__ == '__main__':
                 plot_kde_unitcircle_kde(
                     X_anchor, y_anchor,
                     classes=None,
-                    save_path=f'{save_dir}/KDE/anchor/epoch_{epoch}_kde_unit_circle',
+                    save_path=f'{save_dir}/KDE/{args.kde_reduction_method}/anchor/epoch_{epoch}_kde_unit_circle',
                     plot_scatter=True,
+                    reduction_method=args.kde_reduction_method,
                 )
                 plot_kde_unitcircle_kde(
                     X_pos, y_pos,
                     classes=None,
-                    save_path=f'{save_dir}/KDE/graph_pos/epoch_{epoch}_kde_unit_circle',
+                    save_path=f'{save_dir}/KDE/{args.kde_reduction_method}/graph_pos/epoch_{epoch}_kde_unit_circle',
                     plot_scatter=True,
+                    reduction_method=args.kde_reduction_method,
                 )
 
                 del all_anchor_embeddings, all_anchor_labels, all_pos_embeddings, all_pos_labels
