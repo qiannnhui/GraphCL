@@ -40,6 +40,7 @@ from plot_tsne import visualize_embeddings
 from plot_KDE import plot_kde_unitcircle_kde
 from make_save_dir import make_save_dir # 引入創建儲存目錄的函數
 from save_load_ckpts import load_checkpoint, save_checkpoint # 引入檢查點函數
+from unified_loss import unified_loss
 
 # class GcnInfomax(nn.Module):
 #   def __init__(self, hidden_dim, num_gc_layers, alpha=0.5, beta=1., gamma=.1):
@@ -954,41 +955,66 @@ if __name__ == '__main__':
             data_aug = data_aug.to(device)
 
             x_aug, _ = model(data_aug.x, data_aug.edge_index, data_aug.batch, data_aug.num_graphs)
+            # Assuming unified_loss is defined and handles all pos/neg strategies.
+            # Assuming model.loss_cal_reweighted and model.reweighted_l2_loss are defined for reweighted modes.
             if args.mode == 'normal':
-                # loss, pos_sim, neg_sim = model.loss_cal_normal(x, x_aug, labels=labels, get_cm=True if epoch % log_interval == 0 else False, epoch=epoch)
-                loss, pos_sim, neg_sim = model.loss_cal_normal(x, x_aug, labels=labels, get_cm=False, epoch=epoch)
-            elif args.mode == 'cheated':
-                # loss, pos_sim, neg_sim = model.loss_cal_cheated(x, x_aug, labels, get_cm=True if epoch % log_interval == 0 else False, epoch=epoch)
-                loss, pos_sim, neg_sim = model.loss_cal_cheated(x, x_aug, labels, get_cm=False, epoch=epoch, similarity_measure=args.similarity_measure)
-            elif args.mode == 'rm_FN':
-                # loss, pos_sim, neg_sim = model.loss_cal_rm_FN_only(x, x_aug, labels, get_cm=True if epoch % log_interval == 0 else False, epoch=epoch)
-                loss, pos_sim, neg_sim = model.loss_cal_rm_FN_only(x, x_aug, labels, get_cm=False, epoch=epoch)
-            elif args.mode == 'rm_FP':
-                # loss, pos_sim, neg_sim = model.loss_cal_rm_FP_only(x, x_aug, labels, get_cm=True if epoch % log_interval == 0 else False, epoch=epoch)
-                loss, pos_sim, neg_sim = model.loss_cal_rm_FP_only(x, x_aug, labels, get_cm=False, epoch=epoch)
+                # Standard InfoNCE (Self-Pos / All Negs)
+                loss, pos_sim, neg_sim = unified_loss(x, x_aug, labels, sim_measure=args.similarity_measure)
+
+            elif args.mode == 'TP1_normal':
+                # P = S(x_i, x_i+ sampled), N = All Negs
+                loss, pos_sim, neg_sim = unified_loss(x, x_aug, labels, pos_strategy='sum_sample_tp', pos_num_samples=1, neg_strategy='normal', sim_measure=args.similarity_measure)
+
+            elif args.mode == 'TP1_Nnormal':
+                # P = S(x_i, x_i+ sampled), N = Normalized All Negs
+                loss, pos_sim, neg_sim = unified_loss(x, x_aug, labels, pos_strategy='sum_sample_tp', pos_num_samples=1, neg_strategy='normalized_normal', sim_measure=args.similarity_measure)
+
+            elif args.mode == 'TPs_TNs':
+                # P = Sum(TPs), N = Sum(TNs) (Removes FN and FP)
+                loss, pos_sim, neg_sim = unified_loss(x, x_aug, labels, pos_strategy='sum_tp', neg_strategy='sum_tn', sim_measure=args.similarity_measure)
+
+            elif args.mode == 'normal_TNs':
+                # P = S(x_i, x_i+), N = Sum(TNs) (Removes FN)
+                loss, pos_sim, neg_sim = unified_loss(x, x_aug, labels, pos_strategy='normal', neg_strategy='sum_tn', sim_measure=args.similarity_measure)
+
+            elif args.mode == 'TPs_normal':
+                # P = Sum(TPs), N = All Negs (Removes FP)
+                loss, pos_sim, neg_sim = unified_loss(x, x_aug, labels, pos_strategy='sum_tp', neg_strategy='normal', sim_measure=args.similarity_measure)
+
+            elif args.mode == 'FP1_FNs':
+                # P = Sum(1 random FP), N = Sum(FNs/TPs)
+                loss, pos_sim, neg_sim = unified_loss(x, x_aug, labels, pos_strategy='sum_sample_fp', pos_num_samples=1, neg_strategy='sum_fn', sim_measure=args.similarity_measure)
+
+            elif args.mode == 'normal_FNs':
+                # P = S(x_i, x_i+), N = Sum(FNs/TPs) (Removes TN/FPs)
+                loss, pos_sim, neg_sim = unified_loss(x, x_aug, labels, pos_strategy='normal', neg_strategy='sum_fn', sim_measure=args.similarity_measure)
+
+            elif args.mode == 'FP1_normal':
+                # P = Sum(1 random FP), N = All Negs
+                loss, pos_sim, neg_sim = unified_loss(x, x_aug, labels, pos_strategy='sum_sample_fp', pos_num_samples=1, neg_strategy='normal', sim_measure=args.similarity_measure)
+
+            elif args.mode == 'FPs_FNs':
+                # P = Sum(FPs/TNs), N = Sum(FNs/TPs)
+                loss, pos_sim, neg_sim = unified_loss(x, x_aug, labels, pos_strategy='sum_fp', neg_strategy='sum_fn', sim_measure=args.similarity_measure)
+
+            elif args.mode == 'FPs_normal':
+                # P = Sum(FPs/TNs), N = All Negs
+                loss, pos_sim, neg_sim = unified_loss(x, x_aug, labels, pos_strategy='sum_fp', neg_strategy='normal', sim_measure=args.similarity_measure)
+
+            elif args.mode == 'TP1_TN2':
+                # P = Sum(1 random TP), N = Sum(2 random TNs)
+                loss, pos_sim, neg_sim = unified_loss(x, x_aug, labels, pos_strategy='sum_sample_tp', pos_num_samples=1, neg_strategy='sum_sample_tn', neg_num_samples=2, sim_measure=args.similarity_measure)
+
+            # Reweighted Loss Modes (assuming these are defined within the model class)
             elif args.mode == 'reweighted':
-                # loss, pos_sim, neg_sim = model.loss_cal_rm_FP_only(x, x_aug, labels, get_cm=True if epoch % log_interval == 0 else False, epoch=epoch)
                 loss, _, pos_sim, neg_sim = model.loss_cal_reweighted(x, x_aug)
+
             elif args.mode == 'reweighted_l2':
-                # loss, pos_sim, neg_sim = model.loss_cal_rm_FP_only(x, x_aug, labels, get_cm=True if epoch % log_interval == 0 else False, epoch=epoch)
                 loss, _, pos_sim, neg_sim = model.reweighted_l2_loss(x, x_aug)
-            elif args.mode == 'with_FNFP':
-                loss, pos_sim, neg_sim = model.loss_cal_FN_FP(x, x_aug, labels, FN=True, FP=True)
-            elif args.mode == 'with_FN_only':
-                loss, pos_sim, neg_sim = model.loss_cal_FN_FP(x, x_aug, labels, FN=True, FP=False)
-            elif args.mode == 'with_FP_only':
-                loss, pos_sim, neg_sim = model.loss_cal_FN_FP(x, x_aug, labels, FN=False, FP=True)
-            elif args.mode == 'with_all_FP':
-                loss, pos_sim, neg_sim = model.loss_cal_FN_FP(x, x_aug, labels, FN=True, FP_all=True)
-            elif args.mode == 'with_FP_all_only':
-                loss, pos_sim, neg_sim = model.loss_cal_FN_FP(x, x_aug, labels, FN=False, FP_all=True)
-            elif args.mode == 'sparse_neg':
-                loss, pos_sim, neg_sim = model.loss_cal_custom_sampling(x, x_aug, labels, mode='sparse_neg')
-            elif args.mode == 'random_pos':
-                loss, pos_sim, neg_sim = model.loss_cal_custom_sampling(x, x_aug, labels, mode='random_pos')
+
             else:
-               raise RuntimeError(f"no mode matching {args.mode}, input should be: normal, cheated, rm_FN")
-            
+                # Handles all other unmatched modes
+                raise RuntimeError(f"no mode matching {args.mode}, input should be: normal, TPs_TNs, etc.")
             # scatter plot for theta and l2 norm
             if args.plot_theta_l2 and epoch % log_interval == 0:
                 if first_batch and hasattr(model, 'all_pos_l2'):
