@@ -959,51 +959,51 @@ if __name__ == '__main__':
             # Assuming model.loss_cal_reweighted and model.reweighted_l2_loss are defined for reweighted modes.
             if args.mode == 'normal':
                 # Standard InfoNCE (Self-Pos / All Negs)
-                loss, pos_sim, neg_sim = unified_loss(x, x_aug, labels, sim_measure=args.similarity_measure)
+                loss, pos_sim, neg_sim = unified_loss(x, x_aug, labels, sim_measure=args.similarity_measure, neg_include_self=args.neg_include_self)
 
             elif args.mode == 'TP1_normal':
                 # P = S(x_i, x_i+ sampled), N = All Negs
-                loss, pos_sim, neg_sim = unified_loss(x, x_aug, labels, pos_strategy='sum_sample_tp', pos_num_samples=1, neg_strategy='normal', sim_measure=args.similarity_measure)
+                loss, pos_sim, neg_sim = unified_loss(x, x_aug, labels, pos_strategy='sum_sample_tp', pos_num_samples=1, neg_strategy='normal', sim_measure=args.similarity_measure, neg_include_self=args.neg_include_self)
 
             elif args.mode == 'TP1_Nnormal':
                 # P = S(x_i, x_i+ sampled), N = Normalized All Negs
-                loss, pos_sim, neg_sim = unified_loss(x, x_aug, labels, pos_strategy='sum_sample_tp', pos_num_samples=1, neg_strategy='normalized_normal', sim_measure=args.similarity_measure)
+                loss, pos_sim, neg_sim = unified_loss(x, x_aug, labels, pos_strategy='sum_sample_tp', pos_num_samples=1, neg_strategy='normalized_normal', sim_measure=args.similarity_measure, neg_include_self=args.neg_include_self)
 
             elif args.mode == 'TPs_TNs':
                 # P = Sum(TPs), N = Sum(TNs) (Removes FN and FP)
-                loss, pos_sim, neg_sim = unified_loss(x, x_aug, labels, pos_strategy='sum_tp', neg_strategy='sum_tn', sim_measure=args.similarity_measure)
+                loss, pos_sim, neg_sim = unified_loss(x, x_aug, labels, pos_strategy='sum_tp', neg_strategy='sum_tn', sim_measure=args.similarity_measure, neg_include_self=args.neg_include_self)
 
-            elif args.mode == 'normal_TNs':
+            elif args.mode == 'normal_TNs' or args.mode == 'rm_FN':
                 # P = S(x_i, x_i+), N = Sum(TNs) (Removes FN)
-                loss, pos_sim, neg_sim = unified_loss(x, x_aug, labels, pos_strategy='normal', neg_strategy='sum_tn', sim_measure=args.similarity_measure)
+                loss, pos_sim, neg_sim = unified_loss(x, x_aug, labels, pos_strategy='normal', neg_strategy='sum_tn', sim_measure=args.similarity_measure, neg_include_self=args.neg_include_self)
 
             elif args.mode == 'TPs_normal':
                 # P = Sum(TPs), N = All Negs (Removes FP)
-                loss, pos_sim, neg_sim = unified_loss(x, x_aug, labels, pos_strategy='sum_tp', neg_strategy='normal', sim_measure=args.similarity_measure)
+                loss, pos_sim, neg_sim = unified_loss(x, x_aug, labels, pos_strategy='sum_tp', neg_strategy='normal', sim_measure=args.similarity_measure, neg_include_self=args.neg_include_self)
 
             elif args.mode == 'FP1_FNs':
                 # P = Sum(1 random FP), N = Sum(FNs/TPs)
-                loss, pos_sim, neg_sim = unified_loss(x, x_aug, labels, pos_strategy='sum_sample_fp', pos_num_samples=1, neg_strategy='sum_fn', sim_measure=args.similarity_measure)
+                loss, pos_sim, neg_sim = unified_loss(x, x_aug, labels, pos_strategy='sum_sample_fp', pos_num_samples=1, neg_strategy='sum_fn', sim_measure=args.similarity_measure, neg_include_self=args.neg_include_self)
 
             elif args.mode == 'normal_FNs':
                 # P = S(x_i, x_i+), N = Sum(FNs/TPs) (Removes TN/FPs)
-                loss, pos_sim, neg_sim = unified_loss(x, x_aug, labels, pos_strategy='normal', neg_strategy='sum_fn', sim_measure=args.similarity_measure)
+                loss, pos_sim, neg_sim = unified_loss(x, x_aug, labels, pos_strategy='normal', neg_strategy='sum_fn', sim_measure=args.similarity_measure, neg_include_self=args.neg_include_self)
 
             elif args.mode == 'FP1_normal':
                 # P = Sum(1 random FP), N = All Negs
-                loss, pos_sim, neg_sim = unified_loss(x, x_aug, labels, pos_strategy='sum_sample_fp', pos_num_samples=1, neg_strategy='normal', sim_measure=args.similarity_measure)
+                loss, pos_sim, neg_sim = unified_loss(x, x_aug, labels, pos_strategy='sum_sample_fp', pos_num_samples=1, neg_strategy='normal', sim_measure=args.similarity_measure, neg_include_self=args.neg_include_self)
 
             elif args.mode == 'FPs_FNs':
                 # P = Sum(FPs/TNs), N = Sum(FNs/TPs)
-                loss, pos_sim, neg_sim = unified_loss(x, x_aug, labels, pos_strategy='sum_fp', neg_strategy='sum_fn', sim_measure=args.similarity_measure)
+                loss, pos_sim, neg_sim = unified_loss(x, x_aug, labels, pos_strategy='sum_fp', neg_strategy='sum_fn', sim_measure=args.similarity_measure, neg_include_self=args.neg_include_self)
 
             elif args.mode == 'FPs_normal':
                 # P = Sum(FPs/TNs), N = All Negs
-                loss, pos_sim, neg_sim = unified_loss(x, x_aug, labels, pos_strategy='sum_fp', neg_strategy='normal', sim_measure=args.similarity_measure)
+                loss, pos_sim, neg_sim = unified_loss(x, x_aug, labels, pos_strategy='sum_fp', neg_strategy='normal', sim_measure=args.similarity_measure, neg_include_self=args.neg_include_self)
 
             elif args.mode == 'TP1_TN2':
                 # P = Sum(1 random TP), N = Sum(2 random TNs)
-                loss, pos_sim, neg_sim = unified_loss(x, x_aug, labels, pos_strategy='sum_sample_tp', pos_num_samples=1, neg_strategy='sum_sample_tn', neg_num_samples=2, sim_measure=args.similarity_measure)
+                loss, pos_sim, neg_sim = unified_loss(x, x_aug, labels, pos_strategy='sum_sample_tp', pos_num_samples=1, neg_strategy='sum_sample_tn', neg_num_samples=2, sim_measure=args.similarity_measure, neg_include_self=args.neg_include_self)
 
             # Reweighted Loss Modes (assuming these are defined within the model class)
             elif args.mode == 'reweighted':

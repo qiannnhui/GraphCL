@@ -14,6 +14,7 @@ def make_save_dir(base="./result", args=None, extra=None, add_timestamp=False):
     path_hierarchy = [
         ("DS", args.DS),
         ("mode", args.mode),
+        ("neg_include_self", args.neg_include_self) if args.neg_include_self else None,
         ("aug", args.aug),
         ("shuffle_DBN", args.shuffle_DBN),
         ("or_loss", args.or_loss),
