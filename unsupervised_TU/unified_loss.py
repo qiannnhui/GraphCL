@@ -98,7 +98,8 @@ def unified_loss(x: torch.Tensor, x_aug: torch.Tensor, labels: torch.Tensor, T: 
                      pos_strategy: Literal['normal', 'sum_tp', 'sum_fp', 'sum_all_pos', 'sum_sample_tp', 'sum_sample_fp'] = 'normal', 
                      neg_strategy: Literal['normal', 'sum_tn', 'sum_fn', 'sum_sample_tn', 'sum_sample_fn', 'normalized_normal'] = 'normal',
                      pos_num_samples: int = 10,
-                     neg_num_samples: int = 10):
+                     neg_num_samples: int = 10,
+                     neg_include_self: bool = False):
     
     device = x.device
     sim_matrix = get_similarity_matrix(x=x, x_aug=x_aug, similarity_measure=sim_measure, T=T)
@@ -195,6 +196,9 @@ def unified_loss(x: torch.Tensor, x_aug: torch.Tensor, labels: torch.Tensor, T: 
     else:
         # Default case for error handling
         raise ValueError(f"Unknown neg_strategy: {neg_strategy}")
+    
+    if neg_include_self:
+        N_sum = N_sum + sim_matrix.diag()
 
     # Loss calculation    
     loss = P_term / (N_sum + 1e-8)

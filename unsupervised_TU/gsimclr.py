@@ -976,7 +976,7 @@ if __name__ == '__main__':
                 # P = Sum(TPs), N = Sum(TNs) (Removes FN and FP)
                 loss, pos_sim, neg_sim, theta_degree = unified_loss(x, x_aug, labels, pos_strategy='sum_tp', neg_strategy='sum_tn', sim_measure=args.similarity_measure)
 
-            elif args.mode == 'normal_TNs':
+            elif args.mode == 'normal_TNs' or args.mode == 'rm_FN':
                 # P = S(x_i, x_i+), N = Sum(TNs) (Removes FN)
                 loss, pos_sim, neg_sim, theta_degree = unified_loss(x, x_aug, labels, pos_strategy='normal', neg_strategy='sum_tn', sim_measure=args.similarity_measure)
 
