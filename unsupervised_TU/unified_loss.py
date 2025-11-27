@@ -8,7 +8,7 @@ def get_anchor_aug_theta_degree(x, x_aug):
     cos_theta = (x_norm * x_aug_norm).sum(dim=1).clamp(-1.0, 1.0)
     theta_rad = torch.acos(cos_theta)
     theta_deg = torch.rad2deg(theta_rad)
-    return theta_deg.mean()
+    return theta_deg.detach()
 
 def create_tptn_masks(labels, device):
     labels = labels.view(-1, 1)
