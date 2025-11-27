@@ -1,6 +1,15 @@
 import torch
 from typing import Literal
 
+def get_anchor_aug_theta_degree(x, x_aug):
+    # Calculate the angle in degrees between x and x_aug (positive anchor and its augmentation)
+    x_norm = x / x.norm(dim=1, keepdim=True)
+    x_aug_norm = x_aug / x_aug.norm(dim=1, keepdim=True)
+    cos_theta = (x_norm * x_aug_norm).sum(dim=1).clamp(-1.0, 1.0)
+    theta_rad = torch.acos(cos_theta)
+    theta_deg = torch.rad2deg(theta_rad)
+    return theta_deg.mean()
+
 def create_tptn_masks(labels, device):
     labels = labels.view(-1, 1)
     pos_all_mask = labels.eq(labels.T)
@@ -194,4 +203,5 @@ def unified_loss(x: torch.Tensor, x_aug: torch.Tensor, labels: torch.Tensor, T: 
     pos_sim = P_term.mean()
     neg_sim = N_sum.mean()
 
-    return loss, pos_sim, neg_sim
+    theta_degree = get_anchor_aug_theta_degree(x, x_aug)
+    return loss, pos_sim, neg_sim, theta_degree
