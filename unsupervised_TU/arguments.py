@@ -34,6 +34,8 @@ def arg_parse():
     parser.add_argument('--aug_ratio', dest='aug_ratio', type=int, default=1,
             help='Dropout rate of data augmentation, will be multiplied by 0.1')
     parser.add_argument('--mode', type=str, default='normal', help='normal, rm_FN(rm False Negative), cheated(pos and neg), rm_FP')
+    parser.add_argument('--rotate', type=str, default='by_angle', help='by_angle, random')
+    parser.add_argument('--rotate_angle_degree', type=float, default=30.0, help='Rotation angle in degrees if rotate is by_angle')
     parser.add_argument('--odecay',type=float, default=1.0)  
     parser.add_argument('--plot_theta_l2', action='store_true', help='Plot theta l2 norm')
     parser.add_argument('--plot_theta_l2_distribution', action='store_true', help='Plot single anchor FP and FN distribution')

@@ -42,6 +42,7 @@ from plot_theta_per_epoch import plot_theta_per_epoch
 from make_save_dir import make_save_dir # 引入創建儲存目錄的函數
 from save_load_ckpts import load_checkpoint, save_checkpoint # 引入檢查點函數
 from unified_loss import unified_loss
+from rotate_by_angle import rotate_embedding_high_dim_by_angle, rotate_embedding_high_dim, rotate_embedding_targeted_angle
 
 # class GcnInfomax(nn.Module):
 #   def __init__(self, hidden_dim, num_gc_layers, alpha=0.5, beta=1., gamma=.1):
@@ -958,6 +959,12 @@ if __name__ == '__main__':
             data_aug = data_aug.to(device)
 
             x_aug, _ = model(data_aug.x, data_aug.edge_index, data_aug.batch, data_aug.num_graphs)
+            if args.rotate == 'by_angle':
+                # x_aug = rotate_embedding_high_dim_by_angle(x, angle_degree=30.0, random_plane=True)
+                x_aug = rotate_embedding_targeted_angle(x, angle_degree=args.rotate_angle_deg)
+            elif args.rotate == 'random':
+                x_aug = rotate_embedding_high_dim(x, rotation_type='random')
+
             # Assuming unified_loss is defined and handles all pos/neg strategies.
             # Assuming model.loss_cal_reweighted and model.reweighted_l2_loss are defined for reweighted modes.
             if args.mode == 'normal':

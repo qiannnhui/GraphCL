@@ -21,7 +21,7 @@ def create_tptn_masks(labels, device):
 def get_similarity_matrix(x, x_aug, similarity_measure="cosine", T=0.2):
         
         x_abs = x.norm(dim=1)
-        x_aug_abs = x_aug.norm(dim=1)
+        x_aug_abs = x_aug.norm(dim=1) 
 
         if similarity_measure == "cosine":
             # Cosine similarity

@@ -10,16 +10,19 @@
 #   done
 # done
 
-for DS in MUTAG IMDB-BINARY DD NCI1 REDDIT-BINARY PROTEINS REDDIT-MULTI-5K COLLAB
+for DS in MUTAG DD REDDIT-BINARY IMDB-BINARY NCI1 PROTEINS REDDIT-MULTI-5K COLLAB
 do
-  for AUG in dnodes
+  for AUG in none
   do
     # for MODE in cheated normal reweighted rm_FN rm_FP reweighted_l2
-    for MODE in normal 
+    for MODE in TPs_TNs 
     # for MODE in normal TP1_normal TP1_Nnormal TPs_TNs normal_TNs TPs_normal FP1_FNs normal_FNs FP1_normal FPs_FNs FPs_normal TP1_TN2
     do
-        CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DS --lr 1e-4 --local --num-gc-layers 5 --aug $AUG --mode $MODE --log_interval 10 --epochs 200 --plot_kde --plot_theta_l2 --neg_include_self --plot_anchor_aug_pair_theta_per_epoch
+      for ROTATE in by_angle random
+      do
+          CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DS --lr 1e-4 --local --num-gc-layers 5 --aug $AUG --mode $MODE --log_interval 10 --epochs 200 --plot_kde --plot_theta_l2 --neg_include_self --plot_anchor_aug_pair_theta_per_epoch --rotate $ROTATE --rotate_angle_deg 30
         # CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DS --lr 1e-4 --local --num-gc-layers 5 --aug $AUG --mode $MODE --log_interval 10 --epochs 200 --shuffle_DBN --plot_kde --plot_theta_l2
+      done
     done
   done
 done
