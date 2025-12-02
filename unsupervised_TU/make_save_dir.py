@@ -17,7 +17,7 @@ def make_save_dir(base="./result", args=None, extra=None, add_timestamp=False):
         ("neg_include_self", args.neg_include_self) if args.neg_include_self else None,
         ("aug", args.aug),
         ("rotate", args.rotate) if hasattr(args, "rotate") else None,
-        ("rotate_angle_deg", args.rotate_angle_degree) if hasattr(args, "rotate_angle_degree") and hasattr(args, "rotate") else None,
+        ("rotate_angle_deg", args.rotate_angle_deg) if hasattr(args, "rotate_angle_deg") and hasattr(args, "rotate") else None,
         ("shuffle_DBN", args.shuffle_DBN),
         ("or_loss", args.or_loss),
     ]

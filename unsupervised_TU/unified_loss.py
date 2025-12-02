@@ -1,11 +1,12 @@
 import torch
 from typing import Literal
 
-def get_anchor_aug_theta_degree(x, x_aug):
+def get_all_pair_theta_degree(x, x_aug):
     # Calculate the angle in degrees between x and x_aug (positive anchor and its augmentation)
     x_norm = x / x.norm(dim=1, keepdim=True)
     x_aug_norm = x_aug / x_aug.norm(dim=1, keepdim=True)
-    cos_theta = (x_norm * x_aug_norm).sum(dim=1).clamp(-1.0, 1.0)
+    # cos_theta = (x_norm * x_aug_norm).sum(dim=1).clamp(-1.0, 1.0) # Original line for self-pairs
+    cos_theta = torch.matmul(x_norm, x_aug_norm.T).clamp(-1.0, 1.0) # All pairwise cosine similarities
     theta_rad = torch.acos(cos_theta)
     theta_deg = torch.rad2deg(theta_rad)
     return theta_deg.detach()
@@ -92,6 +93,31 @@ def sample_pairs_by_label_mask(
                 sample_mask[i, sampled_indices] = True
         
     return sample_mask
+
+def get_pair_angles(
+    x: torch.Tensor, 
+    x_aug: torch.Tensor, 
+    labels: torch.Tensor, 
+    pair_type: Literal['TP', 'TN', 'Self', 'ALL_NoneSelf'] = 'Self') -> torch.Tensor:
+    device = x.device
+    theta_matrix = get_all_pair_theta_degree(x, x_aug)
+    
+    TP_mask, TN_mask, diag_mask = create_tptn_masks(labels, device)
+    
+    if pair_type == 'TP':
+        mask = TP_mask
+    elif pair_type == 'TN':
+        mask = TN_mask
+    elif pair_type == 'Self':
+        mask = diag_mask
+    elif pair_type == 'ALL_NoneSelf':
+        mask = ~diag_mask
+    else:
+        raise ValueError(f"Unknown pair_type: {pair_type}. Must be 'TP', 'TN', 'ALL_NoneSelf, or 'Self'.")
+        
+    angles = theta_matrix[mask].detach()
+    
+    return angles
 
 def unified_loss(x: torch.Tensor, x_aug: torch.Tensor, labels: torch.Tensor, T: float = 0.2,
                      sim_measure: str = "cosine",
@@ -207,5 +233,4 @@ def unified_loss(x: torch.Tensor, x_aug: torch.Tensor, labels: torch.Tensor, T: 
     pos_sim = P_term.mean()
     neg_sim = N_sum.mean()
 
-    theta_degree = get_anchor_aug_theta_degree(x, x_aug)
-    return loss, pos_sim, neg_sim, theta_degree
+    return loss, pos_sim, neg_sim
