@@ -864,6 +864,8 @@ if __name__ == '__main__':
     stage_finish_epochs = []
     self_theta_list = []
     neg_theta_list = []
+    TP_theta_list = []
+    TN_theta_list = []
     odecay = args.odecay
     lr = args.lr
     DS = args.DS
@@ -916,6 +918,8 @@ if __name__ == '__main__':
         model.train()
         self_epoch_theta_list = []
         neg_epoch_theta_list = []
+        TP_epoch_theta_list = []
+        TN_epoch_theta_list = []
 
         if args.plot_theta_l2 and epoch % 50 == 0:
             all_pos_l2, all_pos_theta = [], []
@@ -1030,8 +1034,12 @@ if __name__ == '__main__':
             # scatter plot for theta and l2 norm
             self_theta_degree = get_pair_angles(x, x_aug, labels=labels, pair_type='Self')
             neg_theta_degree = get_pair_angles(x, x_aug, labels=labels, pair_type='ALL_NoneSelf')
+            TP_theta_degree = get_pair_angles(x, x_aug, labels=labels, pair_type='TP')
+            TN_theta_degree = get_pair_angles(x, x_aug, labels=labels, pair_type='TN')
             self_epoch_theta_list.append(self_theta_degree.cpu())
             neg_epoch_theta_list.append(neg_theta_degree.cpu())
+            TP_epoch_theta_list.append(TP_theta_degree.cpu())
+            TN_epoch_theta_list.append(TN_theta_degree.cpu())
             if args.plot_theta_l2 and epoch % log_interval == 0:
                 if first_batch and hasattr(model, 'all_pos_l2'):
                     del model.all_pos_l2, model.all_pos_theta, model.all_neg_l2, model.all_neg_theta, model.all_pos_cos, model.all_neg_cos
@@ -1135,6 +1143,8 @@ if __name__ == '__main__':
             acc_val, acc = evaluate_embedding(emb, y)
             self_theta_list.append(torch.cat(self_epoch_theta_list, dim=0).numpy())
             neg_theta_list.append(torch.cat(neg_epoch_theta_list, dim=0).numpy())
+            TP_theta_list.append(torch.cat(TP_epoch_theta_list, dim=0).numpy())
+            TN_theta_list.append(torch.cat(TN_epoch_theta_list, dim=0).numpy())
             # singular_values = check_dimensional_collapse(emb)
             # for i, value in enumerate(singular_values):
             #     writer.add_scalar(f'Singular_Values/{epoch}_{args.DS}', np.log10(value), i)
@@ -1158,6 +1168,8 @@ if __name__ == '__main__':
     if args.plot_anchor_aug_pair_theta_per_epoch:
         plot_theta_per_epoch(args, self_theta_list, save_dir=f'{save_dir}/self_theta')
         plot_theta_per_epoch(args, neg_theta_list, save_dir=f'{save_dir}/neg_theta')
+        plot_theta_per_epoch(args, TP_theta_list, save_dir=f'{save_dir}/TP_theta')
+        plot_theta_per_epoch(args, TN_theta_list, save_dir=f'{save_dir}/TN_theta')
 
     with open((f'{save_dir}/{aug_ratio}_'+str(args.seed)), 'a+') as f:
         s1 = json.dumps(stage_finish_epochs)
