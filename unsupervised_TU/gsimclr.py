@@ -41,6 +41,7 @@ from plot_KDE import plot_kde_unitcircle_kde
 from plot_theta_epoch import plot_theta_per_epoch
 from make_save_dir import make_save_dir # 引入創建儲存目錄的函數
 from save_load_ckpts import load_checkpoint, save_checkpoint # 引入檢查點函數
+from utils import create_pos_and_neg_mask, calculate_f1_scores
 from unified_loss import unified_loss, get_pair_angles
 from rotate_by_angle import rotate_embedding_high_dim_by_angle, rotate_embedding_high_dim, rotate_embedding_targeted_angle
 
@@ -157,19 +158,9 @@ class simclr(nn.Module):
       cm = confusion_matrix(true_labels, pred_labels)
 
       return cm
-  
-  def create_pos_and_neg_mask(self, labels):
-
-    labels = labels.view(-1, 1)
-    pos_mask = labels.eq(labels.T)
-    neg_mask = ~pos_mask
-    # remove self-positive pairs
-    pos_mask = pos_mask & ~torch.diag(torch.ones(labels.size(0), device=labels.device, dtype=torch.bool))
-
-    return pos_mask, neg_mask
 
   def get_confusion_matrix(self, labels, sim_matrix, args, epoch=None):
-        pos_mask, neg_mask = self.create_pos_and_neg_mask(labels=labels)
+        pos_mask, neg_mask = create_pos_and_neg_mask(labels=labels)
         # normalized_sim_matrix = self.min_max_normalization(sim_matrix=sim_matrix)
         # cm = self.calculate_confusion_matrix(pos_mask=pos_mask, sim_matrix=normalized_sim_matrix)
         # plot_similarity_matrix(sim_matrix=sim_matrix, pos_mask=pos_mask, file_name=f'epoch_{epoch}_not_normalized_{args.aug}_{args.mode}')
@@ -183,7 +174,7 @@ class simclr(nn.Module):
         """
         accumulate theta and l2 norm data for plotting
         """
-        pos_mask, neg_mask = self.create_pos_and_neg_mask(labels=labels)
+        pos_mask, neg_mask = create_pos_and_neg_mask(labels=labels)
 
         # ==== 計算 cosine similarity matrix ====
         x_norm = x / x.norm(dim=1, keepdim=True)
@@ -657,6 +648,39 @@ class simclr(nn.Module):
 
         return -(log_pos - log_denom).mean(), FN_matrix, pos_sim_, neg_sim_
 
+  def reweighted_by_angle(self, z_a, z_b, T=0.2, eps=1e-6, deg_boundary=30.0):
+    
+    z_a_norm = F.normalize(z_a, dim=1)
+    z_b_norm = F.normalize(z_b, dim=1)
+    sim_ab = (z_a_norm @ z_b_norm.T).clamp(-1.0, 1.0)
+    
+    angle_ab_deg = torch.rad2deg(torch.acos(sim_ab.clamp(-1.0 + eps, 1.0 - eps))) # 避免 acos(+-1) 導致 NaN
+    FN_candidate_mask = angle_ab_deg <= deg_boundary 
+    diag_mask = torch.eye(sim_ab.size(0), dtype=torch.bool, device=sim_ab.device)
+    FN_angle_matrix = FN_candidate_mask & (~diag_mask)
+    
+    # Pos_Set_Mask: 分子中的所有樣本 (i==i 的正樣本 + FN 樣本)
+    pos_set_mask = FN_candidate_mask # 因為 diag_mask 在 FN_candidate_mask 內
+    
+    # === Pos Pairs Term (Numerator) ===
+    pos_logits = sim_ab / T 
+    pos_logits.masked_fill_(~pos_set_mask, -1e9) 
+    log_numerator = torch.logsumexp(pos_logits, dim=1) 
+    
+    # === Neg Pairs Term (Denominator) ===
+    neg_set_mask = angle_ab_deg > deg_boundary
+    neg_logits = sim_ab / T
+    neg_logits.masked_fill_(~neg_set_mask, -1e9)
+    log_denominator = torch.logsumexp(neg_logits, dim=1) 
+    
+    # === Final Loss (InfoNCE: - log(Numerator / Denominator)) ===    
+    loss = -(log_numerator - log_denominator).mean()
+    pos_sim_avg = sim_ab[pos_set_mask].mean()
+    
+    fn_sim_avg = sim_ab[FN_angle_matrix].mean()
+
+    return loss, pos_sim_avg, fn_sim_avg
+
   def reweighted_l2_loss(self, z_a, z_b, T=0.2, eps=1e-6, neg_aug=False): # Note: dist=True is now enforced for L2
     
     # z_a, z_b 是圖嵌入 (B, D)
@@ -887,6 +911,11 @@ if __name__ == '__main__':
     model = simclr(args.hidden_dim, args.num_gc_layers, shuffle_DBN=args.shuffle_DBN, dataset_num_features=dataset_num_features).to(device)
     # print(model)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+
+    # FN history tracker
+    total_samples = len(dataset)
+    history_size = 10 
+    fn_tracker = FNHistoryTracker(total_samples, history_size)
     
     start_epoch, best_test_acc = load_checkpoint(
         ckpt_filename, 
@@ -920,6 +949,16 @@ if __name__ == '__main__':
         neg_epoch_theta_list = []
         TP_epoch_theta_list = []
         TN_epoch_theta_list = []
+        total_tp = 0
+        total_fp = 0
+        total_fp = 0
+        total_fn_missed = 0
+        hn_weights = fn_tracker.calculate_uncertainty_weights().to(device)
+
+        if args.get_f1_scores:
+            all_x_embeddings = []
+            all_x_aug_embeddings = []
+            all_labels = []
 
         if args.plot_theta_l2 and epoch % 50 == 0:
             all_pos_l2, all_pos_theta = [], []
@@ -941,6 +980,10 @@ if __name__ == '__main__':
 
             data, data_aug = data
             # labels = torch.cat([labels, data.y.to(device)], dim=0)
+
+            # 取得當前 batch 的全局 ID
+            batch_ids = data.global_id.to(device) 
+            current_hn_weights = hn_weights[batch_ids.long()] # (N_batch,)
             labels = data.y.to(device)
             optimizer.zero_grad()
             
@@ -970,6 +1013,11 @@ if __name__ == '__main__':
                 x_aug = rotate_embedding_targeted_angle(x, angle_degree=args.rotate_angle_deg)
             elif args.rotate == 'random':
                 x_aug = rotate_embedding_high_dim(x, rotation_type='random')
+
+            if args.get_f1_scores:
+                all_x_embeddings.append(x.detach().cpu())
+                all_x_aug_embeddings.append(x_aug.detach().cpu())
+                all_labels.append(data.y.detach().cpu())
 
             # Assuming unified_loss is defined and handles all pos/neg strategies.
             # Assuming model.loss_cal_reweighted and model.reweighted_l2_loss are defined for reweighted modes.
@@ -1027,7 +1075,8 @@ if __name__ == '__main__':
 
             elif args.mode == 'reweighted_l2':
                 loss, _, pos_sim, neg_sim = model.reweighted_l2_loss(x, x_aug)
-
+            elif args.mode == 'reweighted_by_angle':
+                loss, pos_sim, neg_sim = model.reweighted_by_angle(x, x_aug, deg_boundary=args.rotate_angle_deg)
             else:
                 # Handles all other unmatched modes
                 raise RuntimeError(f"no mode matching {args.mode}, input should be: normal, TPs_TNs, etc.")
@@ -1090,6 +1139,23 @@ if __name__ == '__main__':
         print('Epoch {}, Loss {}'.format(epoch, loss_all / len(dataloader.dataset)))
         # print("pos sim = ", pos_sim_all, "; neg sim = ", neg_sim_all)
         loss_list.append(loss_all / len(dataloader.dataset))
+
+        if args.get_f1_scores:
+            if len(all_x_embeddings) > 0:
+                f1_epoch, precision_epoch, recall_epoch = calculate_f1_scores(
+                    all_x_embeddings, 
+                    all_x_aug_embeddings, 
+                    all_labels, 
+                    deg_boundary=args.rotate_angle_deg
+                )
+                writer.add_scalar('FN_Analysis_Epoch/Precision', precision_epoch, epoch)
+                writer.add_scalar('FN_Analysis_Epoch/Recall', recall_epoch, epoch)
+                writer.add_scalar('FN_Analysis_Epoch/F1', f1_epoch, epoch)
+                
+                print(f"Epoch {epoch} FN Analysis: F1={f1_epoch:.4f}, P={precision_epoch:.4f}, R={recall_epoch:.4f}")
+            else:
+                print(f"Epoch {epoch}: No data accumulated for FN Analysis.")
+
         if epoch % log_interval == 0:
             if args.plot_kde:
                 os.makedirs(f'{save_dir}/KDE/anchor', exist_ok=True)
