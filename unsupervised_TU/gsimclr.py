@@ -43,7 +43,7 @@ from make_save_dir import make_save_dir # 引入創建儲存目錄的函數
 from save_load_ckpts import load_checkpoint, save_checkpoint # 引入檢查點函數
 from utils import create_pos_and_neg_mask, calculate_f1_scores
 from analyze_high_similarity_negatives import analyze_high_similarity_negatives
-from unified_loss import unified_loss, get_pair_angles
+from unified_loss import unified_loss, get_pair_angles, flexible_hard_mining_loss
 from rotate_by_angle import rotate_embedding_high_dim_by_angle, rotate_embedding_high_dim, rotate_embedding_targeted_angle
 
 # class GcnInfomax(nn.Module):
@@ -1060,6 +1060,12 @@ if __name__ == '__main__':
             elif args.mode == 'TP1_TN2':
                 # P = Sum(1 random TP), N = Sum(2 random TNs)
                 loss, pos_sim, neg_sim = unified_loss(x, x_aug, labels, pos_strategy='sum_sample_tp', pos_num_samples=1, neg_strategy='sum_sample_tn', neg_num_samples=2, sim_measure=args.similarity_measure)
+            elif args.mode == 'TPs_HNs': # cheated rm Easy Negatives
+                # P = Sum(TPs), N = Sum(Hard Negatives)
+                loss, pos_sim, neg_sim = flexible_hard_mining_loss(x, x_aug, labels, args.hard_sim_threshold, num_sets='ALL_POS', den_sets='HN', sim_measure=args.similarity_measure)
+            elif args.mode == 'TPs_ENs': # cheated rm Hard Negatives
+                # P = Sum(TPs), N = Sum(Easy Negatives)
+                loss, pos_sim, neg_sim = flexible_hard_mining_loss(x, x_aug, labels, args.hard_sim_threshold, num_sets='ALL_POS', den_sets='EN', sim_measure=args.similarity_measure)
 
             # Reweighted Loss Modes (assuming these are defined within the model class)
             elif args.mode == 'reweighted':
@@ -1161,6 +1167,7 @@ if __name__ == '__main__':
                 writer.add_scalar('HN_Analysis/Num_High_Sim_Pairs', num_high_sim_pairs, epoch)
                 writer.add_scalar('HN_Analysis/Num_FP_High_Sim', num_fp_hn, epoch)
                 writer.add_scalar('HN_Analysis/Num_TP', num_tp, epoch)
+                writer.add_scalar('HN_Analysis/FP_Rate', num_fp_hn / (num_high_sim_pairs + 1e-8), epoch)
 
             if args.plot_kde:
                 os.makedirs(f'{save_dir}/KDE/anchor', exist_ok=True)

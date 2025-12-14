@@ -94,6 +94,40 @@ def sample_pairs_by_label_mask(
         
     return sample_mask
 
+def get_hard_sets(sim_matrix, labels, hard_sim_threshold):
+    """
+    根據餘弦相似度門檻和標籤，劃分樣本為 TP, FN, EN, HN, SP (五個子集)。
+    - EP: Easy Positive (標籤相同 AND 相似度 >= 門檻 AND i != j)
+    - HP: Hard Positive (標籤相同 AND 相似度 < 門檻 AND i != j)
+    - EN: Easy Negative
+    - HN: Hard Negative
+    - SP: Self Positive (i == j)
+    """
+    B = sim_matrix.size(0)
+    device = sim_matrix.device
+    
+    labels_col = labels.view(-1, 1)
+    pos_label_mask = labels_col.eq(labels_col.T)
+    neg_label_mask = ~pos_label_mask
+
+    hard_sim_mask = sim_matrix >= hard_sim_threshold
+    easy_sim_mask = sim_matrix < hard_sim_threshold
+    diag_mask = torch.diag(torch.ones(B, device=device, dtype=torch.bool))
+    
+    SP_mask = diag_mask
+    EP_mask = pos_label_mask & hard_sim_mask & ~diag_mask
+    HP_mask = pos_label_mask & easy_sim_mask & ~diag_mask
+    HN_mask = neg_label_mask & hard_sim_mask
+    EN_mask = neg_label_mask & easy_sim_mask
+    
+    return {
+        'SP': SP_mask,
+        'EP': EP_mask,
+        'HP': HP_mask,
+        'HN': HN_mask,
+        'EN': EN_mask,
+    }
+
 def get_pair_angles(
     x: torch.Tensor, 
     x_aug: torch.Tensor, 
@@ -234,3 +268,105 @@ def unified_loss(x: torch.Tensor, x_aug: torch.Tensor, labels: torch.Tensor, T: 
     neg_sim = N_sum.mean()
 
     return loss, pos_sim, neg_sim
+
+
+def flexible_hard_mining_loss(
+    x: torch.Tensor, 
+    x_aug: torch.Tensor, 
+    labels: torch.Tensor, 
+    hard_sim_threshold: float,
+    num_sets: str,
+    den_sets: str,
+    T: float = 0.2,
+    sim_measure: str = "cosine",
+    neg_include_self: bool = True
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    基於相似度門檻劃分樣本集 (SP, EP, HP, HN, EN)，並根據 num_sets/den_sets 構建 InfoNCE 損失。
+    
+    Args:
+        x, x_aug, labels, T, sim_measure: 標準 InfoNCE 參數。
+        hard_sim_threshold (float): Hard/Easy 相似度門檻。
+        num_sets (str): 分子包含的集合 (e.g., 'SP,EP')。
+        den_sets (str): 分母包含的集合 (e.g., 'HN,EN,SP')。
+    """
+    eps = 1e-8
+    device = x.device
+    
+    # --- 1. 獲取相似度矩陣 (使用餘弦相似度進行劃分) ---
+    cos_sim_matrix = get_similarity_matrix(x=x, x_aug=x_aug, similarity_measure="cosine", T=1.0) # T=1.0 確保 cos_sim_matrix 是原始餘弦相似度
+    
+    # --- 2. 劃分 Hard/Easy 集合 ---
+    labels_copy = labels.detach().clone() # 確保不影響原標籤張量
+    masks = get_hard_sets(
+        sim_matrix=cos_sim_matrix,
+        labels=labels_copy, 
+        hard_sim_threshold=hard_sim_threshold
+    )
+
+    # --- 3. 獲取指數相似度矩陣 (用於損失計算) ---
+    # 根據指定的 sim_measure 和 T 重新計算 sim_matrix (即 exp(logit))
+    sim_matrix = get_similarity_matrix(x=x, x_aug=x_aug, similarity_measure=sim_measure, T=T)
+    
+    # --- 4. 構建分子 (Numerator Mask) ---
+    numerator_mask = torch.zeros_like(masks['SP'])
+    pos_set_names = num_sets.split(',') 
+    
+    for name in pos_set_names:
+        name = name.strip().upper()
+        if name in masks:
+            numerator_mask |= masks[name]
+        elif name == 'ALL_POS':
+             # 所有正標籤樣本 (i vs i', i vs j' label matched)
+             numerator_mask |= (masks['SP'] | masks['EP'] | masks['HP'])
+        else:
+             print(f"Warning: Unknown numerator set '{name}'")
+    
+    # 計算分子總和
+    P_term = (sim_matrix * numerator_mask.float()).sum(dim=1)
+
+    # --- 5. 構建分母 (Denominator Mask) ---
+    denominator_mask = torch.zeros_like(masks['SP'])
+    neg_set_names = den_sets.split(',') 
+    
+    for name in neg_set_names:
+        name = name.strip().upper()
+        if name in masks:
+            denominator_mask |= masks[name]
+        elif name == 'ALL_NEG':
+            # 所有負標籤樣本 (i vs j' label mismatched)
+            denominator_mask |= (masks['HN'] | masks['EN'])
+        elif name == 'ALL_OTHERS':
+            # 所有非自我對比的樣本 (Standard InfoNCE Denominator)
+            denominator_mask |= (~masks['SP'])
+        else:
+             print(f"Warning: Unknown denominator set '{name}'")
+             
+    # 由於 InfoNCE 的分母通常是 **Positive Term + Negative Terms** 的總和，
+    # 這裡我們將自定義分母視為 Negative Terms 的總和 (N_sum)。
+
+    # 計算分母總和
+    N_sum = (sim_matrix * denominator_mask.float()).sum(dim=1)
+
+    # 處理 neg_include_self (如果分母集不包含 SP，但用戶要求加入)
+    if neg_include_self and 'SP' not in den_sets.upper().split(','):
+        N_sum += sim_matrix.diag()
+
+    # --- 6. 損失計算 ---
+    
+    # 為了遵循標準的 InfoNCE 結構 L = - log ( P_term / (P_term + N_sum) )
+    # 我們將 P_term 視為錨點 i 的正項，N_sum 視為所有負項的總和。
+    
+    # Logit: P_term / (P_term + N_sum)
+    loss_logit = P_term / (N_sum + eps)
+    # loss_logit = P_term / (P_term + N_sum + eps)
+    
+    loss = -torch.log(loss_logit + eps).mean()
+    
+    pos_sim_avg = P_term.mean()
+    neg_sim_avg = N_sum.mean()
+    
+    # 打印集合大小以供調試
+    print(f"|SP|={masks['SP'].sum().item()}, |EP|={masks['EP'].sum().item()}, |HP|={masks['HP'].sum().item()}, |HN|={masks['HN'].sum().item()}, |EN|={masks['EN'].sum().item()}")
+
+    return loss, pos_sim_avg, neg_sim_avg

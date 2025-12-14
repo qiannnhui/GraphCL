@@ -46,6 +46,7 @@ def arg_parse():
     parser.add_argument('--kde_reduction_method', type=str, default='tsne', help='Dimensionality reduction method for KDE, options: tsne, pca, umap')
     parser.add_argument("--shuffle_DBN", action='store_true', help="Use shuffled DBN")
     parser.add_argument("--do_hn_analysis", action='store_true', help="Perform high similarity negative analysis during training")
+    parser.add_argument('--hard_sim_threshold', type=float, default=0.8, help='Hard similarity threshold for high similarity negative analysis')
 
     return parser.parse_args()
 

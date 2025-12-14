@@ -121,72 +121,72 @@ def analyze_high_similarity_negatives(model, dataloader_eval, device, args, simi
     num_fp_hn = FP_HN_mask.sum().item()
     num_tp = TP_mask.sum().item()
     
-    if num_high_sim_pairs == 0:
-        print("\n--- 高相似度負樣本分析 ---")
-        print(f"在相似度門檻 > {similarity_threshold} 時，沒有找到任何高相似度配對。")
-        return
+    # if num_high_sim_pairs == 0:
+    #     print("\n--- 高相似度負樣本分析 ---")
+    #     print(f"在相似度門檻 > {similarity_threshold} 時，沒有找到任何高相似度配對。")
+    #     return
 
     # 5. 結果總結
-    fp_ratio = num_fp_hn / num_high_sim_pairs
-    print("\n" + "="*50)
-    print(f"🌟 相似度 > {similarity_threshold} 的配對分析 (Epoch: {epoch}) 🌟")
-    print(f"總高相似度配對數: {num_high_sim_pairs}")
-    print(f"其中 False Positives (Hard Negatives, 標籤不同) 數: {num_fp_hn}")
-    print(f"其中 True Positives (標籤相同) 數: {num_tp}")
-    print(f"FP / (FP + TP) 比例: {fp_ratio:.4f}")
-    print("="*50)
+    # fp_ratio = num_fp_hn / num_high_sim_pairs
+    # print("\n" + "="*50)
+    # print(f"🌟 相似度 > {similarity_threshold} 的配對分析 (Epoch: {epoch}) 🌟")
+    # print(f"總高相似度配對數: {num_high_sim_pairs}")
+    # print(f"其中 False Positives (Hard Negatives, 標籤不同) 數: {num_fp_hn}")
+    # print(f"其中 True Positives (標籤相同) 數: {num_tp}")
+    # print(f"FP / (FP + TP) 比例: {fp_ratio:.4f}")
+    # print("="*50)
 
-    # 6. 結構特徵分析
-    if num_fp_hn > 0:
-        # 提取 FP/HN 對的索引
-        fp_hn_indices = FP_HN_mask.nonzero() # (M, 2)
+    # # 6. 結構特徵分析
+    # if num_fp_hn > 0:
+    #     # 提取 FP/HN 對的索引
+    #     fp_hn_indices = FP_HN_mask.nonzero() # (M, 2)
         
-        # 提取 TP 對的索引 (只取與 FP/HN 數量相近的樣本，以進行公平比較)
-        num_tp_sample = min(num_tp, num_fp_hn) # 確保數量平衡
-        tp_indices = TP_mask.nonzero()
-        if tp_indices.size(0) > num_tp_sample:
-            # 隨機採樣
-            perm = torch.randperm(tp_indices.size(0))[:num_tp_sample]
-            tp_indices = tp_indices[perm]
+    #     # 提取 TP 對的索引 (只取與 FP/HN 數量相近的樣本，以進行公平比較)
+    #     num_tp_sample = min(num_tp, num_fp_hn) # 確保數量平衡
+    #     tp_indices = TP_mask.nonzero()
+    #     if tp_indices.size(0) > num_tp_sample:
+    #         # 隨機採樣
+    #         perm = torch.randperm(tp_indices.size(0))[:num_tp_sample]
+    #         tp_indices = tp_indices[perm]
 
-        # 準備進行結構分析的圖列表
-        # FP/HN Analysis (Anchor: i, Negative: j)
-        fp_hn_anchors_data = [all_data[i.item()] for i in fp_hn_indices[:, 0]]
-        fp_hn_negatives_data = [all_data[j.item()] for j in fp_hn_indices[:, 1]]
+    #     # 準備進行結構分析的圖列表
+    #     # FP/HN Analysis (Anchor: i, Negative: j)
+    #     fp_hn_anchors_data = [all_data[i.item()] for i in fp_hn_indices[:, 0]]
+    #     fp_hn_negatives_data = [all_data[j.item()] for j in fp_hn_indices[:, 1]]
 
-        # TP Analysis (Anchor: i, Positive: j)
-        tp_anchors_data = [all_data[i.item()] for i in tp_indices[:, 0]]
-        tp_positives_data = [all_data[j.item()] for j in tp_indices[:, 1]]
+    #     # TP Analysis (Anchor: i, Positive: j)
+    #     tp_anchors_data = [all_data[i.item()] for i in tp_indices[:, 0]]
+    #     tp_positives_data = [all_data[j.item()] for j in tp_indices[:, 1]]
 
-        # 執行結構特徵計算
-        fp_hn_anchor_features = get_graph_structural_features(fp_hn_anchors_data)
-        fp_hn_negative_features = get_graph_structural_features(fp_hn_negatives_data)
-        tp_anchor_features = get_graph_structural_features(tp_anchors_data)
-        tp_positive_features = get_graph_structural_features(tp_positives_data)
+    #     # 執行結構特徵計算
+    #     fp_hn_anchor_features = get_graph_structural_features(fp_hn_anchors_data)
+    #     fp_hn_negative_features = get_graph_structural_features(fp_hn_negatives_data)
+    #     tp_anchor_features = get_graph_structural_features(tp_anchors_data)
+    #     tp_positive_features = get_graph_structural_features(tp_positives_data)
 
-        print("\n--- 結構特徵平均值分析 ---")
-        print(f"FP/HN 樣本數: {len(fp_hn_anchors_data)}")
-        print(f"TP 樣本數: {len(tp_anchors_data)}")
+    #     print("\n--- 結構特徵平均值分析 ---")
+    #     print(f"FP/HN 樣本數: {len(fp_hn_anchors_data)}")
+    #     print(f"TP 樣本數: {len(tp_anchors_data)}")
         
-        feature_keys = ['num_nodes', 'num_edges', 'fiedler_value']
+    #     feature_keys = ['num_nodes', 'num_edges', 'fiedler_value']
         
-        for key in feature_keys:
-            # 檢查是否有 NaN 或 Inf，並處理
-            def safe_mean(arr):
-                arr = arr[np.isfinite(arr)]
-                return arr.mean() if len(arr) > 0 else np.nan
+    #     for key in feature_keys:
+    #         # 檢查是否有 NaN 或 Inf，並處理
+    #         def safe_mean(arr):
+    #             arr = arr[np.isfinite(arr)]
+    #             return arr.mean() if len(arr) > 0 else np.nan
 
-            fp_hn_anc_mean = safe_mean(fp_hn_anchor_features[key])
-            fp_hn_neg_mean = safe_mean(fp_hn_negative_features[key])
-            tp_anc_mean = safe_mean(tp_anchor_features[key])
-            tp_pos_mean = safe_mean(tp_positive_features[key])
+    #         fp_hn_anc_mean = safe_mean(fp_hn_anchor_features[key])
+    #         fp_hn_neg_mean = safe_mean(fp_hn_negative_features[key])
+    #         tp_anc_mean = safe_mean(tp_anchor_features[key])
+    #         tp_pos_mean = safe_mean(tp_positive_features[key])
 
-            print(f"\n{key} (平均值):")
-            print(f"  高相似度 HN Anchor: {fp_hn_anc_mean:.4f}")
-            print(f"  高相似度 HN Negative: {fp_hn_neg_mean:.4f}")
-            print(f"  高相似度 TP Anchor: {tp_anc_mean:.4f}")
-            print(f"  高相似度 TP Positive: {tp_pos_mean:.4f}")
+    #         print(f"\n{key} (平均值):")
+    #         print(f"  高相似度 HN Anchor: {fp_hn_anc_mean:.4f}")
+    #         print(f"  高相似度 HN Negative: {fp_hn_neg_mean:.4f}")
+    #         print(f"  高相似度 TP Anchor: {tp_anc_mean:.4f}")
+    #         print(f"  高相似度 TP Positive: {tp_pos_mean:.4f}")
 
-    print("\n" + "="*50)
+    # print("\n" + "="*50)
     return num_high_sim_pairs, num_fp_hn, num_tp
     
