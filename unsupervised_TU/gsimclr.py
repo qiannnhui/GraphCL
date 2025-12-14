@@ -42,6 +42,7 @@ from plot_theta_epoch import plot_theta_per_epoch
 from make_save_dir import make_save_dir # 引入創建儲存目錄的函數
 from save_load_ckpts import load_checkpoint, save_checkpoint # 引入檢查點函數
 from utils import create_pos_and_neg_mask, calculate_f1_scores
+from analyze_high_similarity_negatives import analyze_high_similarity_negatives
 from unified_loss import unified_loss, get_pair_angles
 from rotate_by_angle import rotate_embedding_high_dim_by_angle, rotate_embedding_high_dim, rotate_embedding_targeted_angle
 
@@ -911,11 +912,6 @@ if __name__ == '__main__':
     model = simclr(args.hidden_dim, args.num_gc_layers, shuffle_DBN=args.shuffle_DBN, dataset_num_features=dataset_num_features).to(device)
     # print(model)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-
-    # FN history tracker
-    total_samples = len(dataset)
-    history_size = 10 
-    fn_tracker = FNHistoryTracker(total_samples, history_size)
     
     start_epoch, best_test_acc = load_checkpoint(
         ckpt_filename, 
@@ -953,7 +949,6 @@ if __name__ == '__main__':
         total_fp = 0
         total_fp = 0
         total_fn_missed = 0
-        hn_weights = fn_tracker.calculate_uncertainty_weights().to(device)
 
         if args.get_f1_scores:
             all_x_embeddings = []
@@ -981,9 +976,6 @@ if __name__ == '__main__':
             data, data_aug = data
             # labels = torch.cat([labels, data.y.to(device)], dim=0)
 
-            # 取得當前 batch 的全局 ID
-            batch_ids = data.global_id.to(device) 
-            current_hn_weights = hn_weights[batch_ids.long()] # (N_batch,)
             labels = data.y.to(device)
             optimizer.zero_grad()
             
@@ -1157,6 +1149,19 @@ if __name__ == '__main__':
                 print(f"Epoch {epoch}: No data accumulated for FN Analysis.")
 
         if epoch % log_interval == 0:
+            if args.do_hn_analysis: # 增加一個旗標控制是否執行
+                num_high_sim_pairs, num_fp_hn, num_tp = analyze_high_similarity_negatives(
+                    model=model, 
+                    dataloader_eval=dataloader_eval, 
+                    device=device, 
+                    args=args, 
+                    similarity_threshold=0.8, # 例如，固定使用 0.8
+                    epoch=epoch
+                )
+                writer.add_scalar('HN_Analysis/Num_High_Sim_Pairs', num_high_sim_pairs, epoch)
+                writer.add_scalar('HN_Analysis/Num_FP_High_Sim', num_fp_hn, epoch)
+                writer.add_scalar('HN_Analysis/Num_TP', num_tp, epoch)
+
             if args.plot_kde:
                 os.makedirs(f'{save_dir}/KDE/anchor', exist_ok=True)
                 os.makedirs(f'{save_dir}/KDE/graph_pos', exist_ok=True)

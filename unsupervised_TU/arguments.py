@@ -45,6 +45,7 @@ def arg_parse():
     parser.add_argument('--plot_kde', action='store_true', help='Plot KDE of angles')
     parser.add_argument('--kde_reduction_method', type=str, default='tsne', help='Dimensionality reduction method for KDE, options: tsne, pca, umap')
     parser.add_argument("--shuffle_DBN", action='store_true', help="Use shuffled DBN")
+    parser.add_argument("--do_hn_analysis", action='store_true', help="Perform high similarity negative analysis during training")
 
     return parser.parse_args()
 
