@@ -10,12 +10,12 @@
 #   done
 # done
 
-for DS in MUTAG DD REDDIT-BINARY IMDB-BINARY NCI1 PROTEINS REDDIT-MULTI-5K COLLAB
+for DS in PROTEINS REDDIT-MULTI-5K COLLAB
 do
-  for AUG in none
+  for AUG in dnodes none
   do
     # for MODE in cheated normal reweighted rm_FN rm_FP reweighted_l2
-    for MODE in TPs_HNs TPs_ENs TPs_TNs rm_FNs
+    for MODE in normal_rm_HNs normal_rm_ENs normal_HNs normal_ENs
     # for MODE in normal TP1_normal TP1_Nnormal TPs_TNs normal_TNs TPs_normal FP1_FNs normal_FNs FP1_normal FPs_FNs FPs_normal TP1_TN2
     do
       # for ANGLE in 150

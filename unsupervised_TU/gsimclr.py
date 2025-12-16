@@ -1066,6 +1066,18 @@ if __name__ == '__main__':
             elif args.mode == 'TPs_ENs': # cheated rm Hard Negatives
                 # P = Sum(TPs), N = Sum(Easy Negatives)
                 loss, pos_sim, neg_sim = flexible_hard_mining_loss(x, x_aug, labels, args.hard_sim_threshold, num_sets='ALL_POS', den_sets='EN', sim_measure=args.similarity_measure)
+            elif args.mode == 'normal_rm_HNs':
+                # P = S(x_i, x_i+), N = Sum(Easy Negatives) (Removes Hard Negatives)
+                loss, pos_sim, neg_sim = flexible_hard_mining_loss(x, x_aug, labels, args.hard_sim_threshold, num_sets='SP', den_sets='EN,HP,EP', sim_measure=args.similarity_measure)
+            elif args.mode == 'normal_rm_ENs':
+                # P = S(x_i, x_i+), N = Sum(Hard Negatives) (Removes Easy Negatives)
+                loss, pos_sim, neg_sim = flexible_hard_mining_loss(x, x_aug, labels, args.hard_sim_threshold, num_sets='SP', den_sets='HN,HP,EP', sim_measure=args.similarity_measure)
+            elif args.mode == 'normal_HNs':
+                # P = S(x_i, x_i+), N = Sum(Hard Negatives)
+                loss, pos_sim, neg_sim = flexible_hard_mining_loss(x, x_aug, labels, args.hard_sim_threshold, num_sets='SP', den_sets='HN', sim_measure=args.similarity_measure)
+            elif args.mode == 'normal_ENs':
+                # P = S(x_i, x_i+), N = Sum(Easy Negatives)
+                loss, pos_sim, neg_sim = flexible_hard_mining_loss(x, x_aug, labels, args.hard_sim_threshold, num_sets='SP', den_sets='EN', sim_measure=args.similarity_measure)
 
             # Reweighted Loss Modes (assuming these are defined within the model class)
             elif args.mode == 'reweighted':
