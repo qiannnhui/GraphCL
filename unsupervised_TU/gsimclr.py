@@ -39,6 +39,7 @@ from plot_single_anchor_FP_FN_distribution import plot_theta_l2_distribution
 from plot_tsne import visualize_embeddings
 from plot_KDE import plot_kde_unitcircle_kde
 from plot_theta_epoch import plot_theta_per_epoch
+from plot_sim_epoch import plot_sim_per_epoch
 from make_save_dir import make_save_dir # 引入創建儲存目錄的函數
 from save_load_ckpts import load_checkpoint, save_checkpoint # 引入檢查點函數
 from utils import create_pos_and_neg_mask, calculate_f1_scores
@@ -936,10 +937,118 @@ if __name__ == '__main__':
     accuracies['test'].append(acc)
     """
 
-    for epoch in range(start_epoch, epochs+1):
+    # === Fixed Set Monitoring Initialization ===
+    if args.neg_sim_analysis:
+        print("Initializing Fixed Set for FN/HN/EN Analysis...")
+        monitor_loader = dataloader  # Use eval set as monitor set
+        with torch.no_grad():
+            emb_init, y_init = model.encoder.get_embeddings(monitor_loader)
+            emb_init = torch.from_numpy(emb_init).to(device)
+            y_init = torch.from_numpy(y_init).to(device)
+            
+            # Initial Similarity Matrix
+            emb_init_norm = F.normalize(emb_init, dim=1)
+            sim_init = torch.matmul(emb_init_norm, emb_init_norm.T) # (N, N)
+            
+            # Masks
+            labels_col = y_init.view(-1, 1)
+            mask_same_label = labels_col.eq(labels_col.T)
+            mask_diff_label = ~mask_same_label
+            mask_self = torch.eye(y_init.shape[0], dtype=torch.bool, device=device)
+            
+            # FN: Same Label but NOT self
+            mask_FN_fixed = mask_same_label & ~mask_self
+            
+            # HN: Diff Label but High Similarity (> 0.5)
+            # You can adjust threshold here. User asked for "Low Sim" for EN and "High Sim" for HN.
+            hn_threshold = 0.8
+            mask_HN_fixed = mask_diff_label & (sim_init > hn_threshold)
+            
+            # EN: Diff Label but Low Similarity (< 0.0)
+            mask_EN_fixed = mask_diff_label & (sim_init < hn_threshold)
+            
+            print(f"Fixed Set Stats: N={y_init.shape[0]}")
+            print(f"Num FN Pairs: {mask_FN_fixed.sum().item()}")
+            print(f"Num HN Pairs (> {hn_threshold}): {mask_HN_fixed.sum().item()}")
+            print(f"Num EN Pairs (< {hn_threshold}): {mask_EN_fixed.sum().item()}")
+            
+            # === Dynamic Threshold based on FN Mean ===
+            fn_mean_init = sim_init[mask_FN_fixed].mean().item() if mask_FN_fixed.any() else 0.5
+            print(f"Initializing Dynamic Threshold based on FN Mean: {fn_mean_init:.4f}")
+            
+            mask_HN_dynamic = mask_diff_label & (sim_init > fn_mean_init)
+            mask_EN_dynamic = mask_diff_label & (sim_init < fn_mean_init)
+            
+            print(f"Num HN Pairs (Dynamic > {fn_mean_init:.4f}): {mask_HN_dynamic.sum().item()}")
+            print(f"Num EN Pairs (Dynamic < {fn_mean_init:.4f}): {mask_EN_dynamic.sum().item()}")
+
+
+            # Storage for plotting
+            fixed_FN_sims = []
+            fixed_HN_sims = []
+            fixed_EN_sims = []
+            dynamic_HN_sims = []
+            dynamic_EN_sims = []
+            
+
+    for epoch in range(0, epochs + 1):
+    # for epoch in range(start_epoch, epochs + 1):
+        # lr = scheduler.step()
         loss_all = 0
         pos_sim_all = 0
         neg_sim_all = 0
+        
+        # === Fixed Set Analysis Logging ===
+        if args.neg_sim_analysis:
+            with torch.no_grad():
+                emb_curr, _ = model.encoder.get_embeddings(monitor_loader)
+                emb_curr = torch.from_numpy(emb_curr).to(device)
+                emb_curr_norm = F.normalize(emb_curr, dim=1)
+                sim_curr = torch.matmul(emb_curr_norm, emb_curr_norm.T)
+                
+                # Calculate Mean Similarities using Fixed Masks
+                sim_FN_val = float('nan')
+                if mask_FN_fixed.any():
+                    sim_FN_val = sim_curr[mask_FN_fixed].mean().item()
+                    writer.add_scalar('Neg_sim_Analysis/FN_Mean_Sim', sim_FN_val, epoch)
+                
+                sim_HN_val = float('nan')
+                if mask_HN_fixed.any():
+                    sim_HN_val = sim_curr[mask_HN_fixed].mean().item()
+                    writer.add_scalar('Neg_sim_Analysis/HN_Mean_Sim', sim_HN_val, epoch)
+                    
+                sim_EN_val = float('nan')
+                if mask_EN_fixed.any():
+                    sim_EN_val = sim_curr[mask_EN_fixed].mean().item()
+                    writer.add_scalar('Neg_sim_Analysis/EN_Mean_Sim', sim_EN_val, epoch)
+
+                # === Dynamic Set Analysis Logging ===
+                sim_HN_dynamic_val = float('nan')
+                if mask_HN_dynamic.any():
+                    sim_HN_dynamic_val = sim_curr[mask_HN_dynamic].mean().item()
+                    writer.add_scalar('Neg_sim_Analysis/Dynamic_HN_Mean_Sim', sim_HN_dynamic_val, epoch)
+
+                sim_EN_dynamic_val = float('nan')
+                if mask_EN_dynamic.any():
+                    sim_EN_dynamic_val = sim_curr[mask_EN_dynamic].mean().item()
+                    writer.add_scalar('Neg_sim_Analysis/Dynamic_EN_Mean_Sim', sim_EN_dynamic_val, epoch)
+                    
+                print(f"Epoch {epoch} Fixed Set Sim: FN={sim_FN_val:.4f}, HN={sim_HN_val:.4f}, EN={sim_EN_val:.4f}, Dyn_HN={sim_HN_dynamic_val:.4f}, Dyn_EN={sim_EN_dynamic_val:.4f}")
+
+                # === Collect Data for Plotting (Similarities) ===
+                def get_sims_from_mask(sim_matrix, mask):
+                    if not mask.any():
+                        return np.array([])
+                    sim_vals = sim_matrix[mask]
+                    # Direct similarity values
+                    return sim_vals.cpu().numpy()
+
+                fixed_FN_sims.append(get_sims_from_mask(sim_curr, mask_FN_fixed))
+                fixed_HN_sims.append(get_sims_from_mask(sim_curr, mask_HN_fixed))
+                fixed_EN_sims.append(get_sims_from_mask(sim_curr, mask_EN_fixed))
+                dynamic_HN_sims.append(get_sims_from_mask(sim_curr, mask_HN_dynamic))
+                dynamic_EN_sims.append(get_sims_from_mask(sim_curr, mask_EN_dynamic))
+
         model.train()
         self_epoch_theta_list = []
         neg_epoch_theta_list = []
@@ -1260,6 +1369,13 @@ if __name__ == '__main__':
         plot_theta_per_epoch(args, neg_theta_list, save_dir=f'{save_dir}/neg_theta')
         plot_theta_per_epoch(args, TP_theta_list, save_dir=f'{save_dir}/TP_theta')
         plot_theta_per_epoch(args, TN_theta_list, save_dir=f'{save_dir}/TN_theta')
+
+    if args.neg_sim_analysis:
+        plot_sim_per_epoch(args, fixed_FN_sims, save_dir=f'{save_dir}/Fixed_FN_sim', title_suffix="(Fixed FN)")
+        plot_sim_per_epoch(args, fixed_HN_sims, save_dir=f'{save_dir}/Fixed_HN_sim', title_suffix="(Fixed HN)")
+        plot_sim_per_epoch(args, fixed_EN_sims, save_dir=f'{save_dir}/Fixed_EN_sim', title_suffix="(Fixed EN)")
+        plot_sim_per_epoch(args, dynamic_HN_sims, save_dir=f'{save_dir}/Dynamic_HN_sim_mean_{fn_mean_init:.2f}', title_suffix="(Dynamic HN)")
+        plot_sim_per_epoch(args, dynamic_EN_sims, save_dir=f'{save_dir}/Dynamic_EN_sim_mean_{fn_mean_init:.2f}', title_suffix="(Dynamic EN)")
 
     with open((f'{save_dir}/{aug_ratio}_'+str(args.seed)), 'a+') as f:
         s1 = json.dumps(stage_finish_epochs)

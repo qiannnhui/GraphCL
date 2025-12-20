@@ -47,6 +47,7 @@ def arg_parse():
     parser.add_argument("--shuffle_DBN", action='store_true', help="Use shuffled DBN")
     parser.add_argument("--do_hn_analysis", action='store_true', help="Perform high similarity negative analysis during training")
     parser.add_argument('--hard_sim_threshold', type=float, default=0.8, help='Hard similarity threshold for high similarity negative analysis')
+    parser.add_argument("--neg_sim_analysis", action='store_true', help="Enable fixed and dynamic set analysis for FN/HN/EN over epochs")
 
     return parser.parse_args()
 
