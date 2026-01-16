@@ -914,12 +914,12 @@ if __name__ == '__main__':
     # print(model)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     
-    start_epoch, best_test_acc = load_checkpoint(
-        ckpt_filename, 
-        model, 
-        optimizer, 
-        device
-    )
+    # start_epoch, best_test_acc = load_checkpoint(
+    #     ckpt_filename, 
+    #     model, 
+    #     optimizer, 
+    #     device
+    # )
     print('================')
     print('lr: {}'.format(lr))
     print('num_features: {}'.format(dataset_num_features))
@@ -1000,6 +1000,7 @@ if __name__ == '__main__':
         
         # === Fixed Set Analysis Logging ===
         if args.neg_sim_analysis:
+            model.eval()
             with torch.no_grad():
                 emb_curr, _ = model.encoder.get_embeddings(monitor_loader)
                 emb_curr = torch.from_numpy(emb_curr).to(device)
@@ -1048,6 +1049,8 @@ if __name__ == '__main__':
                 fixed_EN_sims.append(get_sims_from_mask(sim_curr, mask_EN_fixed))
                 dynamic_HN_sims.append(get_sims_from_mask(sim_curr, mask_HN_dynamic))
                 dynamic_EN_sims.append(get_sims_from_mask(sim_curr, mask_EN_dynamic))
+            
+            model.train()
 
         model.train()
         self_epoch_theta_list = []
