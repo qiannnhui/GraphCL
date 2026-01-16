@@ -11,7 +11,7 @@ def create_pos_and_neg_mask(labels):
 
     return pos_mask, neg_mask
 
-def calculate_f1_scores(all_x, all_x_aug, all_labels, T=0.2, eps=1e-6, deg_boundary=30.0):
+def calculate_f1_scores_by_deg_boundary(all_x, all_x_aug, all_labels, T=0.2, eps=1e-6, deg_boundary=30.0):
     """
     Calculate (F1, Precision, Recall) per epoch based on False Negative (FN) analysis.
     """

@@ -27,7 +27,7 @@ def arg_parse():
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--or_loss', action='store_true', help='Set or_loss to True if this flag is present')
     parser.add_argument('--neg_include_self', action='store_true', help='Include self in negative samples')
-    parser.add_argument('--get_f1_scores', action='store_true', help='Calculate F1 scores for FN analysis')
+    parser.add_argument('--get_f1_scores_by_deg_boundary', action='store_true', help='Calculate F1 scores for FN analysis')
 #     parser.add_argument('--path', type=str, default='/disk_194b/GCL_datasets/data') # 30
 #     parser.add_argument('--path', type=str, default='/disk_195a/qiannnhui/data') # 195
 #     parser.add_argument('--path', type=str, default='/disk_248a/qiannnhui/data') # 248

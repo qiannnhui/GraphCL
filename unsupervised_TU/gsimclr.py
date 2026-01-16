@@ -42,7 +42,7 @@ from plot_theta_epoch import plot_theta_per_epoch
 from plot_sim_epoch import plot_sim_per_epoch
 from make_save_dir import make_save_dir # 引入創建儲存目錄的函數
 from save_load_ckpts import load_checkpoint, save_checkpoint # 引入檢查點函數
-from utils import create_pos_and_neg_mask, calculate_f1_scores
+from utils import create_pos_and_neg_mask, calculate_f1_scores_by_deg_boundary
 from analyze_high_similarity_negatives import analyze_high_similarity_negatives
 from unified_loss import unified_loss, get_pair_angles, flexible_hard_mining_loss
 from rotate_by_angle import rotate_embedding_high_dim_by_angle, rotate_embedding_high_dim, rotate_embedding_targeted_angle
@@ -445,6 +445,152 @@ class simclr(nn.Module):
 
     return loss, pos_sim_, neg_sim_
 
+  def identify_fn_by_en_curriculum(self, sim_matrix, labels, epoch, total_epochs, 
+                               base_en_ratio=0.1, max_en_ratio=0.5, overlap_threshold=0.5):
+        """
+        分析 EN-based FN 識別的動態指標
+        Args:
+            sim_matrix: (B, B) 相似度矩陣 (exp(cos/T))
+            labels: (B,) 標籤
+            base_en_ratio/max_en_ratio: 用於動態增加 EN 比例
+        """
+        batch_size = sim_matrix.size(0)
+        device = sim_matrix.device
+        diag_mask = torch.eye(batch_size, dtype=torch.bool, device=device)
+        labels_col = labels.view(-1, 1)
+        
+        # Ground Truth Masks
+        gt_fn_mask = labels_col.eq(labels_col.T) & ~diag_mask  # 真正的同類 (FN)
+        gt_tn_mask = ~labels_col.eq(labels_col.T)             # 真正的異類 (TN)
+        
+        total_gt_fn = gt_fn_mask.sum().float()
+        total_gt_tn = gt_tn_mask.sum().float()
+        
+        # --- 動態 EN 策略 ---
+        # 隨著 Epoch 線性增加觀察 EN 的比例
+        curr_en_ratio = base_en_ratio + (max_en_ratio - base_en_ratio) * (epoch / total_epochs)
+        k = max(1, int(batch_size * curr_en_ratio))
+        
+        # 識別預測的 FN (Pred FN)
+        _, en_indices = torch.topk(sim_matrix, k=k, dim=1, largest=False)
+        en_mask = torch.zeros_like(sim_matrix).scatter_(1, en_indices, 1.0)
+        shared_count = torch.matmul(en_mask, en_mask.T)
+        pred_fn_mask = (shared_count / k >= overlap_threshold) & ~diag_mask
+        
+        # --- 指標統計 ---
+        tp_fn = (pred_fn_mask & gt_fn_mask).sum().float() # 拿對的
+        fp_fn = (pred_fn_mask & gt_tn_mask).sum().float() # 拿錯的 (誤殺 TN)
+        
+
+        # 1. FN 拿對率 (Recall)
+        fn_recall = tp_fn / (total_gt_fn + 1e-8)
+
+        # 2. 移除精準度 (Precision)
+        fn_precision = tp_fn / (pred_fn_mask.sum().float() + 1e-8)
+
+        fn_f1 = 2 * (fn_precision * fn_recall) / (fn_precision + fn_recall + 1e-8)
+        
+        # 3. FN 拿錯率 (False Alarm Rate / FPR) - 你最關心的指標
+        fn_wrong_rate = fp_fn / (total_gt_tn + 1e-8)
+        
+        # 4. 分母純淨度分析
+        denom_mask_after = ~diag_mask & ~pred_fn_mask
+        remaining_fn_count = (denom_mask_after & gt_fn_mask).sum().float()
+        remaining_fn_ratio = remaining_fn_count / (denom_mask_after.sum().float() + 1e-8)
+        original_fn_ratio = total_gt_fn / (batch_size * (batch_size - 1) + 1e-8)
+
+        stats = {
+            'fn_recall': fn_recall.item(),
+            'fn_wrong_rate': fn_wrong_rate.item(),
+            'fn_precision': fn_precision.item(),
+            'fn_f1': fn_f1.item(),
+            'remaining_fn_ratio': remaining_fn_ratio.item(),
+            'original_fn_ratio': original_fn_ratio.item(),
+            'curr_en_ratio': curr_en_ratio
+        }
+        
+        return pred_fn_mask, stats
+
+  def identify_fn_by_en(self, sim_matrix, labels, top_k_en=10, overlap_threshold=0.5):
+        """
+        基於共享 Easy Negatives 識別 False Negatives 並計算指標
+        Args:
+            sim_matrix: (B, B) 相似度矩陣 (已經過 exp/T)
+            labels: (B,) 真實標籤
+            top_k_en: 取相似度最低的前 K 個作為 EN 集合
+            overlap_threshold: 共享 EN 的比例門檻，超過則判定為 FN
+        """
+        batch_size = sim_matrix.size(0)
+        device = sim_matrix.device
+        
+        # 1. 為每個樣本找出相似度最低的 Top-K (Easy Negatives)
+        # 取得排序索引，前 top_k_en 個就是相似度最小的
+        _, en_indices = torch.topk(sim_matrix, k=top_k_en, dim=1, largest=False)
+        
+        # 2. 構建 EN 掩碼矩陣 (B, B) -> 若 j 是 i 的 EN 則為 1
+        en_mask = torch.zeros_like(sim_matrix).scatter_(1, en_indices, 1.0)
+        
+        # 3. 計算樣本間共享 EN 的數量 (Matrix Multiplication)
+        # shared_count[i, j] 代表 i 和 j 共同擁有的 EN 數量
+        shared_count = torch.matmul(en_mask, en_mask.T)
+        
+        # 4. 計算共享比例並判定推斷出的 FN (Predicted FN)
+        # 排除自己 (對角線)
+        shared_ratio = shared_count / top_k_en
+        pred_fn_mask = (shared_ratio >= overlap_threshold)
+        diag_mask = torch.eye(batch_size, dtype=torch.bool, device=device)
+        pred_fn_mask = pred_fn_mask & ~diag_mask
+        
+        # 5. 真實 FN 統計 (Ground Truth)
+        # 真實 FN 定義：標籤相同但不是自己
+        labels_col = labels.view(-1, 1)
+        gt_fn_mask = labels_col.eq(labels_col.T) & ~diag_mask
+        
+        # 6. 計算 Precision, Recall, F1
+        tp = (pred_fn_mask & gt_fn_mask).sum().float()
+        fp = (pred_fn_mask & ~gt_fn_mask).sum().float()
+        fn = (~pred_fn_mask & gt_fn_mask).sum().float()
+        
+        precision = tp / (tp + fp + 1e-8)
+        recall = tp / (tp + fn + 1e-8)
+        f1 = 2 * (precision * recall) / (precision + recall + 1e-8)
+        
+        return pred_fn_mask, precision.item(), recall.item(), f1.item()
+  
+#   def loss_cal_rm_FNs_by_ENs(self, x, x_aug, labels, top_k_en=10, overlap_threshold=0.5, neg_include_self=True):
+  def loss_cal_rm_FNs_by_ENs(self, x, x_aug, labels, cur_epoch, total_epochs, base_en_ratio=0.1, max_en_ratio=0.5, overlap_threshold=0.5, neg_include_self=True):
+        T = 0.2
+        num_samples, _ = x.size()
+        # 計算全矩陣相似度
+        sim_matrix = torch.exp(torch.mm(F.normalize(x, dim=1), F.normalize(x_aug, dim=1).T) / T)
+        
+        # 使用我們新寫的函數
+        # top_k 可以設為 batch_size 的 20%~30%
+        # pred_fn_mask, prec, rec, f1_score = self.identify_fn_by_en(
+        #     sim_matrix, labels, top_k_en=top_k_en, overlap_threshold=overlap_threshold
+        # )
+        pred_fn_mask, en_stats = self.identify_fn_by_en_curriculum(
+                    sim_matrix, labels, cur_epoch, total_epochs,
+                    base_en_ratio=base_en_ratio, max_en_ratio=max_en_ratio, overlap_threshold=overlap_threshold
+                )
+        
+        # --- 計算 Loss ---
+        self_pos = sim_matrix.diag() # (B,)
+        
+        # 定義分母：原本是 sum(sim) - self_pos
+        # 現在要額外扣除 pred_fn_mask 標註出的項
+        # 我們建立一個 mask，只保留真正的 Negative (非 Self 且 非推斷出的 FN)
+        denom_mask = torch.ones_like(sim_matrix, dtype=torch.bool)
+        diag_mask = torch.eye(num_samples, dtype=torch.bool, device=device)
+        denom_mask[diag_mask] = False if not neg_include_self else True    # 扣除自己 if neg_include_self=False
+        denom_mask[pred_fn_mask] = False # 扣除推斷出的 FN
+        
+        neg_sim_sum = (sim_matrix * denom_mask).sum(dim=1)
+        
+        loss = -torch.log(self_pos / (neg_sim_sum + 1e-8) + 1e-8).mean()
+
+        return loss, en_stats
+        # return loss, prec, rec, f1_score
 
   def loss_cal(self, x, x_aug, labels, get_cm=False, epoch=None):
 
@@ -1062,7 +1208,7 @@ if __name__ == '__main__':
         total_fp = 0
         total_fn_missed = 0
 
-        if args.get_f1_scores:
+        if args.get_f1_scores_by_deg_boundary:
             all_x_embeddings = []
             all_x_aug_embeddings = []
             all_labels = []
@@ -1118,7 +1264,7 @@ if __name__ == '__main__':
             elif args.rotate == 'random':
                 x_aug = rotate_embedding_high_dim(x, rotation_type='random')
 
-            if args.get_f1_scores:
+            if args.get_f1_scores_by_deg_boundary:
                 all_x_embeddings.append(x.detach().cpu())
                 all_x_aug_embeddings.append(x_aug.detach().cpu())
                 all_labels.append(data.y.detach().cpu())
@@ -1199,6 +1345,9 @@ if __name__ == '__main__':
                 loss, _, pos_sim, neg_sim = model.reweighted_l2_loss(x, x_aug)
             elif args.mode == 'reweighted_by_angle':
                 loss, pos_sim, neg_sim = model.reweighted_by_angle(x, x_aug, deg_boundary=args.rotate_angle_deg)
+            elif args.mode == 'rm_FNs_by_ENs':
+                loss, en_stats = model.loss_cal_rm_FNs_by_ENs(x, x_aug, labels, epoch, epochs, base_en_ratio=0.3, max_en_ratio=0.6, overlap_threshold=0.5, neg_include_self=args.neg_include_self)
+                # loss, fn_by_en_prec, fn_by_en_recall, fn_by_en_f1 = model.loss_cal_rm_FNs_by_ENs(x, x_aug, labels, top_k_en=max(5, int(batch_size * 0.2)), overlap_threshold=0.5, neg_include_self=args.neg_include_self)
             else:
                 # Handles all other unmatched modes
                 raise RuntimeError(f"no mode matching {args.mode}, input should be: normal, TPs_TNs, etc.")
@@ -1234,8 +1383,9 @@ if __name__ == '__main__':
             # print(x_aug)
             oloss = odecay * l2_reg_ortho(model)
             loss_all += loss.item() * data.num_graphs
-            pos_sim_all += pos_sim.item()
-            neg_sim_all += neg_sim.item()
+            if not args.mode == 'rm_FNs_by_ENs':
+                pos_sim_all += pos_sim.item()
+                neg_sim_all += neg_sim.item()
             if args.or_loss:
                 loss += oloss
             loss.backward()
@@ -1255,16 +1405,30 @@ if __name__ == '__main__':
                 plot_theta_l2_distribution(x, x_aug, labels=data.y, args=args, epoch=epoch)
         # tensorboard
         writer.add_scalar('Loss/train', loss_all / len(dataloader.dataset), epoch)
-        writer.add_scalar('Similarity/pos_sim', pos_sim_all / len(dataloader), epoch)
-        writer.add_scalar('Similarity/neg_sim', neg_sim_all / len(dataloader), epoch)
+        if not args.mode == 'rm_FNs_by_ENs':
+            writer.add_scalar('Similarity/pos_sim', pos_sim_all / len(dataloader), epoch)
+            writer.add_scalar('Similarity/neg_sim', neg_sim_all / len(dataloader), epoch)
+        else:
+            writer.add_scalar('EN_FN_Dynamics/Removal_Recall', en_stats['fn_recall'], epoch)
+            writer.add_scalar('EN_FN_Dynamics/Wrong_Rate_TN_Killed', en_stats['fn_wrong_rate'], epoch)
+            writer.add_scalar('EN_FN_Dynamics/Removal_Precision', en_stats['fn_precision'], epoch)
+            writer.add_scalar('EN_FN_Dynamics/Removal_F1_Score', en_stats['fn_f1'], epoch)
+            writer.add_scalar('EN_FN_Dynamics/Current_EN_Ratio', en_stats['curr_en_ratio'], epoch)
+            writer.add_scalars('EN_FN_Dynamics/Purity_Check', {
+                'Cleaned_FN_Ratio': en_stats['remaining_fn_ratio'],
+                'Original_FN_Ratio': en_stats['original_fn_ratio']
+            }, epoch)
+            # writer.add_scalar('EN_Inference/FN_Precision', prec, epoch)
+            # writer.add_scalar('EN_Inference/FN_Recall', recall, epoch)
+            # writer.add_scalar('EN_Inference/FN_F1', f1, epoch)
 
         print('Epoch {}, Loss {}'.format(epoch, loss_all / len(dataloader.dataset)))
         # print("pos sim = ", pos_sim_all, "; neg sim = ", neg_sim_all)
         loss_list.append(loss_all / len(dataloader.dataset))
 
-        if args.get_f1_scores:
+        if args.get_f1_scores_by_deg_boundary:
             if len(all_x_embeddings) > 0:
-                f1_epoch, precision_epoch, recall_epoch = calculate_f1_scores(
+                f1_epoch, precision_epoch, recall_epoch = calculate_f1_scores_by_deg_boundary(
                     all_x_embeddings, 
                     all_x_aug_embeddings, 
                     all_labels, 
