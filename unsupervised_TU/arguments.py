@@ -35,7 +35,7 @@ def arg_parse():
     parser.add_argument('--aug_ratio', dest='aug_ratio', type=int, default=1,
             help='Dropout rate of data augmentation, will be multiplied by 0.1')
     parser.add_argument('--mode', type=str, default='normal', help='normal, rm_FN(rm False Negative), cheated(pos and neg), rm_FP')
-    parser.add_argument('--rotate', type=str, default='by_angle', help='by_angle, random')
+    parser.add_argument('--rotate', type=str, default="none", help='by_angle, random')
     parser.add_argument('--rotate_angle_deg', type=float, default=30.0, help='Rotation angle in degrees if rotate is by_angle')
     parser.add_argument('--odecay',type=float, default=1.0)  
     parser.add_argument('--plot_theta_l2', action='store_true', help='Plot theta l2 norm')
@@ -48,6 +48,7 @@ def arg_parse():
     parser.add_argument("--do_hn_analysis", action='store_true', help="Perform high similarity negative analysis during training")
     parser.add_argument('--hard_sim_threshold', type=float, default=0.8, help='Hard similarity threshold for high similarity negative analysis')
     parser.add_argument("--neg_sim_analysis", action='store_true', help="Enable fixed and dynamic set analysis for FN/HN/EN over epochs")
+    parser.add_argument("--en_overlap_threshold", type=float, default=0.7, help="Overlap threshold for EN identification")
 
     return parser.parse_args()
 

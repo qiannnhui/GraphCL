@@ -21,10 +21,12 @@ do
     do
       # for ANGLE in 150
       # do
-          CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DS --lr 1e-4 --local --num-gc-layers 5 --aug $AUG --mode $MODE --log_interval 10 --epochs 200 --plot_kde --plot_theta_l2 --neg_include_self --plot_anchor_aug_pair_theta_per_epoch --do_hn_analysis
+      for EN_THRESHOLD in 0.9 0.7 0.5
+      do
+          CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DS --lr 1e-4 --local --num-gc-layers 5 --aug $AUG --mode $MODE --log_interval 10 --epochs 200 --plot_kde --plot_theta_l2 --neg_include_self --plot_anchor_aug_pair_theta_per_epoch --en_overlap_threshold $EN_THRESHOLD
           # CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DS --lr 1e-4 --local --num-gc-layers 5 --aug $AUG --mode $MODE --log_interval 10 --epochs 200 --plot_kde --plot_theta_l2 --neg_include_self --plot_anchor_aug_pair_theta_per_epoch --rotate by_angle --rotate_angle_deg $ANGLE --get_f1_scores_by_deg_boundary --do_hn_analysis
         # CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DS --lr 1e-4 --local --num-gc-layers 5 --aug $AUG --mode $MODE --log_interval 10 --epochs 200 --shuffle_DBN --plot_kde --plot_theta_l2
-      # done
+      done
     done
   done
 done

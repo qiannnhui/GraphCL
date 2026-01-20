@@ -12,15 +12,17 @@ def make_save_dir(base="./result", args=None, extra=None, add_timestamp=False):
 
     # 主要屬性（可依需求調整順序）
     path_hierarchy = [
-        ("DS", args.DS),
         ("mode", args.mode),
+        ("DS", args.DS),
         ("neg_include_self", args.neg_include_self) if args.neg_include_self else None,
-        ("aug", args.aug),
-        ("rotate", args.rotate) if hasattr(args, "rotate") else None,
-        ("rotate_angle_deg", args.rotate_angle_deg) if hasattr(args, "rotate_angle_deg") and hasattr(args, "rotate") else None,
-        ("shuffle_DBN", args.shuffle_DBN),
-        ("or_loss", args.or_loss),
+        ("aug", args.aug) if args.rotate == "none" else None,
+        ("rotate", args.rotate) if args.rotate in ['random', "by_degree"] and hasattr(args, "rotate") else None,
+        ("rotate_angle_deg", args.rotate_angle_deg) if args.mode=="reweighted_by_angle" and hasattr(args, "rotate_angle_deg") and hasattr(args, "rotate") else None,
+        ("shuffle_DBN", args.shuffle_DBN) if args.shuffle_DBN else None,
+        ("or_loss", args.or_loss) if args.or_loss else None,
+        ("en_overlap_threshold", args.en_overlap_threshold) if args.mode=="rm_FNs_by_ENs" and hasattr(args, "en_overlap_threshold") else None,
     ]
+    path_hierarchy = [item for item in path_hierarchy if item is not None]
 
     # 這些用來放在最底層（用底線連接）
     tags = []

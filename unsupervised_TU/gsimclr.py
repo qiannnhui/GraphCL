@@ -446,7 +446,7 @@ class simclr(nn.Module):
     return loss, pos_sim_, neg_sim_
 
   def identify_fn_by_en_curriculum(self, sim_matrix, labels, epoch, total_epochs, 
-                               base_en_ratio=0.1, max_en_ratio=0.5, overlap_threshold=0.5):
+                               base_en_ratio=0.1, max_en_ratio=0.5, en_overlap_threshold=0.5):
         """
         分析 EN-based FN 識別的動態指標
         Args:
@@ -475,7 +475,7 @@ class simclr(nn.Module):
         _, en_indices = torch.topk(sim_matrix, k=k, dim=1, largest=False)
         en_mask = torch.zeros_like(sim_matrix).scatter_(1, en_indices, 1.0)
         shared_count = torch.matmul(en_mask, en_mask.T)
-        pred_fn_mask = (shared_count / k >= overlap_threshold) & ~diag_mask
+        pred_fn_mask = (shared_count / k >= en_overlap_threshold) & ~diag_mask
         
         # --- 指標統計 ---
         tp_fn = (pred_fn_mask & gt_fn_mask).sum().float() # 拿對的
@@ -511,14 +511,14 @@ class simclr(nn.Module):
         
         return pred_fn_mask, stats
 
-  def identify_fn_by_en(self, sim_matrix, labels, top_k_en=10, overlap_threshold=0.5):
+  def identify_fn_by_en(self, sim_matrix, labels, top_k_en=10, en_overlap_threshold=0.5):
         """
         基於共享 Easy Negatives 識別 False Negatives 並計算指標
         Args:
             sim_matrix: (B, B) 相似度矩陣 (已經過 exp/T)
             labels: (B,) 真實標籤
             top_k_en: 取相似度最低的前 K 個作為 EN 集合
-            overlap_threshold: 共享 EN 的比例門檻，超過則判定為 FN
+            en_overlap_threshold: 共享 EN 的比例門檻，超過則判定為 FN
         """
         batch_size = sim_matrix.size(0)
         device = sim_matrix.device
@@ -537,7 +537,7 @@ class simclr(nn.Module):
         # 4. 計算共享比例並判定推斷出的 FN (Predicted FN)
         # 排除自己 (對角線)
         shared_ratio = shared_count / top_k_en
-        pred_fn_mask = (shared_ratio >= overlap_threshold)
+        pred_fn_mask = (shared_ratio >= en_overlap_threshold)
         diag_mask = torch.eye(batch_size, dtype=torch.bool, device=device)
         pred_fn_mask = pred_fn_mask & ~diag_mask
         
@@ -557,8 +557,8 @@ class simclr(nn.Module):
         
         return pred_fn_mask, precision.item(), recall.item(), f1.item()
   
-#   def loss_cal_rm_FNs_by_ENs(self, x, x_aug, labels, top_k_en=10, overlap_threshold=0.5, neg_include_self=True):
-  def loss_cal_rm_FNs_by_ENs(self, x, x_aug, labels, cur_epoch, total_epochs, base_en_ratio=0.1, max_en_ratio=0.5, overlap_threshold=0.5, neg_include_self=True):
+#   def loss_cal_rm_FNs_by_ENs(self, x, x_aug, labels, top_k_en=10, en_overlap_threshold=0.5, neg_include_self=True):
+  def loss_cal_rm_FNs_by_ENs(self, x, x_aug, labels, cur_epoch, total_epochs, base_en_ratio=0.1, max_en_ratio=0.5, en_overlap_threshold=0.5, neg_include_self=True):
         T = 0.2
         num_samples, _ = x.size()
         # 計算全矩陣相似度
@@ -567,13 +567,22 @@ class simclr(nn.Module):
         # 使用我們新寫的函數
         # top_k 可以設為 batch_size 的 20%~30%
         # pred_fn_mask, prec, rec, f1_score = self.identify_fn_by_en(
-        #     sim_matrix, labels, top_k_en=top_k_en, overlap_threshold=overlap_threshold
+        #     sim_matrix, labels, top_k_en=top_k_en, en_overlap_threshold=en_overlap_threshold
         # )
         pred_fn_mask, en_stats = self.identify_fn_by_en_curriculum(
                     sim_matrix, labels, cur_epoch, total_epochs,
-                    base_en_ratio=base_en_ratio, max_en_ratio=max_en_ratio, overlap_threshold=overlap_threshold
+                    base_en_ratio=base_en_ratio, max_en_ratio=max_en_ratio, en_overlap_threshold=en_overlap_threshold
                 )
         
+        num_deleted_fn = pred_fn_mask.sum().item()
+        # 總負樣本對數量 (不含對角線) 為 N * (N - 1)
+        total_neg_pairs = batch_size * (batch_size - 1)
+        fn_ratio = num_deleted_fn / (total_neg_pairs + 1e-8)
+        
+        # 將這些資訊加入 en_stats 回傳
+        en_stats['num_deleted_fn'] = num_deleted_fn
+        en_stats['fn_ratio_in_batch'] = fn_ratio
+
         # --- 計算 Loss ---
         self_pos = sim_matrix.diag() # (B,)
         
@@ -1205,9 +1214,16 @@ if __name__ == '__main__':
         TN_epoch_theta_list = []
         total_tp = 0
         total_fp = 0
-        total_fp = 0
         total_fn_missed = 0
-
+        if args.mode == 'rm_FNs_by_ENs':
+                    epoch_en_stats = {
+                        'fn_recall': 0.0,
+                        'fn_wrong_rate': 0.0,
+                        'fn_precision': 0.0,
+                        'fn_f1': 0.0,
+                        'num_deleted_fn': 0.0,
+                        'fn_ratio': 0.0
+                    }
         if args.get_f1_scores_by_deg_boundary:
             all_x_embeddings = []
             all_x_aug_embeddings = []
@@ -1346,8 +1362,18 @@ if __name__ == '__main__':
             elif args.mode == 'reweighted_by_angle':
                 loss, pos_sim, neg_sim = model.reweighted_by_angle(x, x_aug, deg_boundary=args.rotate_angle_deg)
             elif args.mode == 'rm_FNs_by_ENs':
-                loss, en_stats = model.loss_cal_rm_FNs_by_ENs(x, x_aug, labels, epoch, epochs, base_en_ratio=0.3, max_en_ratio=0.6, overlap_threshold=0.5, neg_include_self=args.neg_include_self)
-                # loss, fn_by_en_prec, fn_by_en_recall, fn_by_en_f1 = model.loss_cal_rm_FNs_by_ENs(x, x_aug, labels, top_k_en=max(5, int(batch_size * 0.2)), overlap_threshold=0.5, neg_include_self=args.neg_include_self)
+                loss, en_stats = model.loss_cal_rm_FNs_by_ENs(x, x_aug, labels, epoch, epochs, base_en_ratio=0.3, max_en_ratio=0.6, en_overlap_threshold=args.en_overlap_threshold, neg_include_self=args.neg_include_self)
+                
+                # === 累加每個 Batch 的指標 ===
+                epoch_en_stats['fn_recall'] += en_stats['fn_recall']
+                epoch_en_stats['fn_wrong_rate'] += en_stats['fn_wrong_rate']
+                epoch_en_stats['fn_precision'] += en_stats['fn_precision']
+                epoch_en_stats['fn_f1'] += en_stats['fn_f1']
+                epoch_en_stats['num_deleted_fn'] += en_stats['num_deleted_fn']
+                epoch_en_stats['fn_ratio'] += en_stats['fn_ratio_in_batch']
+                
+                # 保留當前比例 (這通常隨 epoch 變動，batch 間相同)
+                current_en_ratio_val = en_stats['curr_en_ratio']
             else:
                 # Handles all other unmatched modes
                 raise RuntimeError(f"no mode matching {args.mode}, input should be: normal, TPs_TNs, etc.")
@@ -1408,19 +1434,27 @@ if __name__ == '__main__':
         if not args.mode == 'rm_FNs_by_ENs':
             writer.add_scalar('Similarity/pos_sim', pos_sim_all / len(dataloader), epoch)
             writer.add_scalar('Similarity/neg_sim', neg_sim_all / len(dataloader), epoch)
-        else:
-            writer.add_scalar('EN_FN_Dynamics/Removal_Recall', en_stats['fn_recall'], epoch)
-            writer.add_scalar('EN_FN_Dynamics/Wrong_Rate_TN_Killed', en_stats['fn_wrong_rate'], epoch)
-            writer.add_scalar('EN_FN_Dynamics/Removal_Precision', en_stats['fn_precision'], epoch)
-            writer.add_scalar('EN_FN_Dynamics/Removal_F1_Score', en_stats['fn_f1'], epoch)
-            writer.add_scalar('EN_FN_Dynamics/Current_EN_Ratio', en_stats['curr_en_ratio'], epoch)
+        elif args.mode == 'rm_FNs_by_ENs':
+            num_batches = len(dataloader)
+            
+            avg_recall = epoch_en_stats['fn_recall'] / num_batches
+            avg_wrong_rate = epoch_en_stats['fn_wrong_rate'] / num_batches
+            avg_precision = epoch_en_stats['fn_precision'] / num_batches
+            avg_f1 = epoch_en_stats['fn_f1'] / num_batches
+            avg_deleted_count = epoch_en_stats['num_deleted_fn'] / num_batches
+            avg_deleted_ratio = epoch_en_stats['fn_ratio'] / num_batches
+
+            writer.add_scalar('EN_FN_Dynamics/Removal_Recall', avg_recall, epoch)
+            writer.add_scalar('EN_FN_Dynamics/Wrong_Rate_TN_Killed', avg_wrong_rate, epoch)
+            writer.add_scalar('EN_FN_Dynamics/Removal_Precision', avg_precision, epoch)
+            writer.add_scalar('EN_FN_Dynamics/Removal_F1_Score', avg_f1, epoch)
+            writer.add_scalar('EN_FN_Dynamics/Current_EN_Ratio', current_en_ratio_val, epoch)
+            writer.add_scalar('FN_Stats/Avg_Deleted_FN_Count_Per_Batch', avg_deleted_count, epoch)
+            writer.add_scalar('FN_Stats/Avg_Deleted_FN_Ratio_Per_Batch', avg_deleted_ratio, epoch)
             writer.add_scalars('EN_FN_Dynamics/Purity_Check', {
                 'Cleaned_FN_Ratio': en_stats['remaining_fn_ratio'],
                 'Original_FN_Ratio': en_stats['original_fn_ratio']
             }, epoch)
-            # writer.add_scalar('EN_Inference/FN_Precision', prec, epoch)
-            # writer.add_scalar('EN_Inference/FN_Recall', recall, epoch)
-            # writer.add_scalar('EN_Inference/FN_F1', f1, epoch)
 
         print('Epoch {}, Loss {}'.format(epoch, loss_all / len(dataloader.dataset)))
         # print("pos sim = ", pos_sim_all, "; neg sim = ", neg_sim_all)
@@ -1443,7 +1477,7 @@ if __name__ == '__main__':
                 print(f"Epoch {epoch}: No data accumulated for FN Analysis.")
 
         if epoch % log_interval == 0:
-            if args.do_hn_analysis: # 增加一個旗標控制是否執行
+            if args.do_hn_analysis:
                 num_high_sim_pairs, num_fp_hn, num_tp = analyze_high_similarity_negatives(
                     model=model, 
                     dataloader_eval=dataloader_eval, 
@@ -1487,18 +1521,6 @@ if __name__ == '__main__':
 
                 del all_anchor_embeddings, all_anchor_labels, all_pos_embeddings, all_pos_labels
                 torch.cuda.empty_cache()
-                # plot_kde_unitcircle_kde(
-                #     x.detach().cpu().numpy(),                 # (N, D) 的 embeddings
-                #     data.y.detach().cpu().numpy(),                 # (N,) 的標籤（int 或可 hash）
-                #     classes=None,      # 要畫哪些 class，None=全部
-                #     save_path=f'KDE/{args.DS}/{args.mode}/{args.aug}/anchor/epoch_{epoch}_kde_unit_circle',
-                # )
-                # plot_kde_unitcircle_kde(
-                #     x_aug.detach().cpu().numpy(),                 # (N, D) 的 embeddings
-                #     data.y.detach().cpu().numpy(),                 # (N,) 的標籤（int 或可 hash）
-                #     classes=None,      # 要畫哪些 class，None=全部
-                #     save_path=f'KDE/{args.DS}/{args.mode}/{args.aug}/graph_pos/epoch_{epoch}_kde_unit_circle',
-                # )
 
             if args.plot_theta_l2 and epoch % 50 == 0:
                 result = plot_theta_l2_epoch(all_pos_l2, all_pos_theta, all_neg_l2, all_neg_theta, all_real_pos_l2,
