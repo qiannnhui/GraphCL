@@ -673,6 +673,60 @@ class simclr(nn.Module):
         loss = -torch.log(self_pos / (weighted_neg_sim + 1e-8) + 1e-8).mean()
 
         return loss, fn_confidence, stats
+  
+  def loss_cal_advanced_reweight_FNs(self, x, x_aug, labels, cur_epoch, total_epochs, 
+                                       base_en_ratio=0.3, max_en_ratio=0.6, 
+                                       thresholds=[0.5, 0.6, 0.7, 0.8, 0.9], 
+                                       strategy='power_scaling', neg_include_self=True):
+        T = 0.2
+        batch_size, _ = x.size()
+        sim_matrix = torch.exp(torch.mm(F.normalize(x, dim=1), F.normalize(x_aug, dim=1).T) / T)
+        
+        # 獲取原始信心度 [0, 1]
+        fn_confidence, en_stats = self.identify_fn_by_en_probabilistic(
+            sim_matrix, labels, cur_epoch, total_epochs, base_en_ratio, max_en_ratio, thresholds
+        )
+        
+        if strategy == 'hard_pruning':
+            # 策略 1: 只要投票過半，就視為 FN 完全拿掉
+            negative_weights = (fn_confidence < 0.5).float()
+            
+        elif strategy == 'power_scaling':
+            # 策略 2: 非線性壓縮，讓高信心樣本的權重極速下降
+            negative_weights = torch.pow(1.0 - fn_confidence, 3) # alpha=3
+            
+        elif strategy == 'hybrid':
+            # 策略 3: 混合模式，低於門檻不管，高於門檻線性減弱
+            negative_weights = torch.where(fn_confidence > 0.3, 1.0 - fn_confidence, torch.ones_like(fn_confidence))
+        
+        # --- 處理分母 ---
+        self_pos = sim_matrix.diag()
+        diag_mask = torch.eye(batch_size, dtype=torch.bool, device=x.device)
+        
+        # 處理對角線
+        if not neg_include_self:
+            negative_weights = negative_weights.masked_fill(diag_mask, 0.0)
+        else:
+            negative_weights = negative_weights.masked_fill(diag_mask, 1.0)
+            
+        weighted_neg_sim = (sim_matrix * negative_weights).sum(dim=1)
+        
+        # --- 額外：將高信心樣本加回分子 (Adversarial Pull) ---
+        # 如果你希望主動拉近 FN，可以計算一個額外的 Pull Loss
+        if strategy == 'hybrid':
+            # 找出信心度極高的樣本當作正樣本
+            high_conf_mask = (fn_confidence > 0.8)
+            if high_conf_mask.any():
+                pull_sim = (sim_matrix * high_conf_mask).sum(dim=1) / (high_conf_mask.sum(dim=1) + 1e-8)
+                # 這裡將 pull_sim 加入分子
+                loss = -torch.log((self_pos + pull_sim) / (weighted_neg_sim + 1e-8) + 1e-8).mean()
+            else:
+                loss = -torch.log(self_pos / (weighted_neg_sim + 1e-8) + 1e-8).mean()
+        else:
+            # 標準 Masked InfoNCE
+            loss = -torch.log(self_pos / (weighted_neg_sim + 1e-8) + 1e-8).mean()
+
+        return loss, fn_confidence, en_stats
 
   def loss_cal(self, x, x_aug, labels, get_cm=False, epoch=None):
 
@@ -1456,6 +1510,8 @@ if __name__ == '__main__':
 
             elif args.mode == 'reweight_FNs_by_ENs':
                 loss, fn_confidence, en_stats = model.loss_cal_reweighted_FNs_by_ENs(x, x_aug, labels, epoch, epochs, base_en_ratio=0.3, max_en_ratio=0.6, thresholds=args.thresholds, neg_include_self=args.neg_include_self)
+                if hasattr(args, 'advanced_en_handling') and not args.advanced_en_handling=='none':
+                    loss, fn_confidence, en_stats = model.loss_cal_advanced_reweight_FNs(x, x_aug, labels, epoch, epochs, base_en_ratio=0.3, max_en_ratio=0.6, thresholds=args.thresholds, strategy=args.advanced_en_handling, neg_include_self=args.neg_include_self)
                 # === 累加每個 Batch 的指標 ===
                 epoch_en_stats['fn_recall'] += en_stats['fn_recall']
                 epoch_en_stats['fn_wrong_rate'] += en_stats['fn_wrong_rate']
