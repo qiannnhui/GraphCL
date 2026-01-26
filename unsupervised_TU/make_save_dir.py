@@ -22,7 +22,6 @@ def make_save_dir(base="./result", args=None, extra=None, add_timestamp=False):
         ("or_loss", args.or_loss) if args.or_loss else None,
         ("en_overlap_threshold", args.en_overlap_threshold) if args.mode=="rm_FNs_by_ENs" and hasattr(args, "en_overlap_threshold") else None,
         ("thresholds", "-".join(map(str, args.thresholds))) if args.mode=="reweight_FNs_by_ENs" and hasattr(args, "thresholds") else None,
-        ("advanced_en_handling", args.advanced_en_handling) if args.mode=="reweight_FNs_by_ENs" and not args.advanced_en_handling=='none' else None,
     ]
     path_hierarchy = [item for item in path_hierarchy if item is not None]
 
