@@ -1093,6 +1093,46 @@ def setup_seed(seed):
     np.random.seed(seed)
     random.seed(seed)
 
+def analyze_embedding_structure(model, dataloader, device):
+    model.eval()
+    all_emb = []
+    all_y = []
+    with torch.no_grad():
+        for data, _ in dataloader: # 這裡用 eval 模式不需要 aug
+            data = data.to(device)
+            emb, _ = model.encoder(data.x, data.edge_index, data.batch)
+            all_emb.append(emb.cpu())
+            all_y.append(data.y.cpu())
+    
+    z = F.normalize(torch.cat(all_emb, dim=0), p=2, dim=1) # (N, D)
+    y = torch.cat(all_y, dim=0)
+    num_samples = z.size(0)
+    
+    # 1. 計算所有 Pair 的相似度矩陣
+    sim_matrix = torch.mm(z, z.t()) # (N, N)
+    
+    # 2. 建立標籤 Mask
+    y_col = y.view(-1, 1)
+    mask_same = y_col.eq(y_col.t())
+    mask_diff = ~mask_same
+    diag = torch.eye(num_samples, dtype=torch.bool)
+    
+    # 3. 提取指標
+    # 真 FN 相似度 (同類且非自己)
+    true_fn_sims = sim_matrix[mask_same & ~diag].mean().item()
+    # 不同類相似度
+    true_tn_sims = sim_matrix[mask_diff].mean().item()
+    
+    # 4. Alignment & Uniformity
+    # 這裡簡化計算，Uniformity 通常計算所有對的 RBF kernel
+    uniformity = torch.pdist(z).pow(2).mul(-2).exp().mean().log().item()
+
+    return {
+        'avg_true_fn_sim': true_fn_sims,
+        'avg_true_tn_sim': true_tn_sims,
+        'uniformity': uniformity,
+        'separation_margin': true_fn_sims - true_tn_sims # 預期這個值越來越大
+    }
 
 if __name__ == '__main__':
     
@@ -1652,6 +1692,11 @@ if __name__ == '__main__':
             # tensorboard
             writer.add_scalar('Accuracy/val', acc_val, epoch)
             writer.add_scalar('Accuracy/test', acc, epoch)
+
+        struct_stats = analyze_embedding_structure(model, dataloader_eval, device)
+        writer.add_scalar('Structure/True_FN_Similarity', struct_stats['avg_true_fn_sim'], epoch)
+        writer.add_scalar('Structure/Separation_Margin', struct_stats['separation_margin'], epoch)
+        writer.add_scalar('Structure/Uniformity', struct_stats['uniformity'], epoch)
 
     if args.plot_anchor_aug_pair_theta_per_epoch:
         plot_theta_per_epoch(args, self_theta_list, save_dir=f'{save_dir}/self_theta')
