@@ -601,9 +601,8 @@ class simclr(nn.Module):
         return loss, en_stats
         # return loss, prec, rec, f1_score
 
-  def identify_fn_by_en_probabilistic(self, sim_matrix, labels, epoch, total_epochs, 
-                                        base_en_ratio=0.3, max_en_ratio=0.6, 
-                                        thresholds=[0.3, 0.4, 0.5, 0.6, 0.7]):
+  def identify_fn_by_en_coverage(self, sim_matrix, labels, epoch, total_epochs, 
+                                   base_en_ratio=0.3, max_en_ratio=0.6):
         batch_size = sim_matrix.size(0)
         device = sim_matrix.device
         diag_mask = torch.eye(batch_size, dtype=torch.bool, device=device)
@@ -612,54 +611,55 @@ class simclr(nn.Module):
         curr_en_ratio = base_en_ratio + (max_en_ratio - base_en_ratio) * (epoch / total_epochs)
         k = max(1, int(batch_size * curr_en_ratio))
         
-        # 2. 獲取 EN 掩碼並計算共享比例
+        # 2. 獲取 EN 掩碼
         _, en_indices = torch.topk(sim_matrix, k=k, dim=1, largest=False)
         en_mask = torch.zeros_like(sim_matrix).scatter_(1, en_indices, 1.0)
+        
+        # 3. 計算 Coverage (Shared Ratio) -> 這就是我們的連續預測值 [0, 1]
         shared_count = torch.matmul(en_mask, en_mask.T)
-        shared_ratio = shared_count / k  # (B, B)
+        coverage = (shared_count / k).masked_fill(diag_mask, 0.0)
         
-        # 3. 多門檻投票 (Soft Voting)
-        fn_confidence = torch.zeros_like(shared_ratio)
-        for t in thresholds:
-            fn_confidence += (shared_ratio >= t).float()
-        
-        fn_confidence = fn_confidence / len(thresholds) 
-        fn_confidence = fn_confidence.masked_fill(diag_mask, 0.0)
-        
-        # 4. 指標統計 (以信心度 >= 0.5 作為預測為 FN 的判斷)
+        # 4. 真實標籤矩陣 (Ground Truth Matrix)
         labels_col = labels.view(-1, 1)
-        gt_fn_mask = labels_col.eq(labels_col.T) & ~diag_mask
-        gt_tn_mask = ~labels_col.eq(labels_col.T) & ~diag_mask
-        
-        pred_fn_mask = (fn_confidence >= 0.5)
-        tp_fn = (pred_fn_mask & gt_fn_mask).sum().float()
-        fp_fn = (pred_fn_mask & gt_tn_mask).sum().float() # 誤殺 TN
+        gt_fn_mask = (labels_col.eq(labels_col.T) & ~diag_mask).float() # 同類為 1
+        gt_tn_mask = (~labels_col.eq(labels_col.T) & ~diag_mask).float() # 異類為 1
+
+        # 5. 計算 Soft Metrics (非離散)
+        # Soft TP: 在標籤為同類的地方，coverage 的總和
+        soft_tp = torch.sum(coverage * gt_fn_mask)
+        # Soft FP: 在標籤為異類的地方，coverage 的總和 (即誤判的總機率)
+        soft_fp = torch.sum(coverage * gt_tn_mask)
+        # Soft FN: 在標籤為同類的地方，漏掉的機率 (1 - coverage) 總和
+        soft_fn = torch.sum((1 - coverage) * gt_fn_mask)
+
+        soft_precision = soft_tp / (soft_tp + soft_fp + 1e-8)
+        soft_recall = soft_tp / (soft_tp + soft_fn + 1e-8)
+        soft_f1 = (2 * soft_precision * soft_recall) / (soft_precision + soft_recall + 1e-8)
         
         stats = {
-            'fn_recall': tp_fn / (gt_fn_mask.sum() + 1e-8),
-            'fn_precision': tp_fn / (pred_fn_mask.sum() + 1e-8),
-            'fn_f1': 2 * tp_fn / (gt_fn_mask.sum() + pred_fn_mask.sum() + 1e-8),
-            'fn_wrong_rate': fp_fn / (gt_tn_mask.sum() + 1e-8),
-            'avg_fn_confidence': fn_confidence[gt_fn_mask].mean().item() if gt_fn_mask.any() else 0,
-            'curr_en_ratio': curr_en_ratio,
-            'num_fn_pairs': pred_fn_mask.sum().item(),
-            'fn_ratio': pred_fn_mask.sum().item() / (batch_size * (batch_size - 1) + 1e-8)
+            'soft_fn_recall': soft_recall.item(),
+            'soft_fn_precision': soft_precision.item(),
+            'soft_fn_f1': soft_f1.item(),
+            'avg_coverage': coverage[gt_fn_mask.bool()].mean().item() if gt_fn_mask.any() else 0,
+            'curr_en_ratio': curr_en_ratio
         }
         
-        return fn_confidence, stats
+        return coverage, stats
 
   def loss_cal_reweighted_FNs_by_ENs(self, x, x_aug, labels, cur_epoch, total_epochs, 
-                                       base_en_ratio=0.3, max_en_ratio=0.6, thresholds=[0.3, 0.4, 0.5, 0.6, 0.7], neg_include_self=True):
+                                       base_en_ratio=0.3, max_en_ratio=0.6, neg_include_self=True):
         T = 0.2
         batch_size, _ = x.size()
         sim_matrix = torch.exp(torch.mm(F.normalize(x, dim=1), F.normalize(x_aug, dim=1).T) / T)
         
-        fn_confidence, stats = self.identify_fn_by_en_probabilistic(
-            sim_matrix, labels, cur_epoch, total_epochs, base_en_ratio, max_en_ratio, thresholds
+        # 使用 Coverage 邏輯
+        coverage, stats = self.identify_fn_by_en_coverage(
+            sim_matrix, labels, cur_epoch, total_epochs, base_en_ratio, max_en_ratio
         )
         
-        # 權重分配：信心越高，分母推力越小 (W = 1 - Confidence)
-        negative_weights = 1.0 - fn_confidence
+        # 權重分配：Coverage 越高 (越可能是 FN)，負樣本的權重越低
+        # W = 1 - Coverage
+        negative_weights = 1.0 - coverage
         
         self_pos = sim_matrix.diag()
         diag_mask = torch.eye(batch_size, dtype=torch.bool, device=x.device)
@@ -672,7 +672,7 @@ class simclr(nn.Module):
         weighted_neg_sim = (sim_matrix * negative_weights).sum(dim=1)
         loss = -torch.log(self_pos / (weighted_neg_sim + 1e-8) + 1e-8).mean()
 
-        return loss, fn_confidence, stats
+        return loss, coverage, stats
 
   def loss_cal(self, x, x_aug, labels, get_cm=False, epoch=None):
 
@@ -1299,13 +1299,10 @@ if __name__ == '__main__':
                     }
         if args.mode == 'reweight_FNs_by_ENs':
                     epoch_en_stats = {
-                        'fn_recall': 0.0,
-                        'fn_wrong_rate': 0.0,
-                        'fn_precision': 0.0,
-                        'fn_f1': 0.0,
-                        'num_fn_pairs': 0.0,
-                        'fn_ratio': 0.0,
-                        'avg_fn_confidence': 0.0
+                        'soft_fn_recall': 0.0,
+                        'soft_fn_precision': 0.0,
+                        'soft_fn_f1': 0.0,
+                        'avg_coverage': 0.0
                     }
         if args.get_f1_scores_by_deg_boundary:
             all_x_embeddings = []
@@ -1455,15 +1452,12 @@ if __name__ == '__main__':
                 epoch_en_stats['fn_ratio'] += en_stats['fn_ratio_in_batch']
 
             elif args.mode == 'reweight_FNs_by_ENs':
-                loss, fn_confidence, en_stats = model.loss_cal_reweighted_FNs_by_ENs(x, x_aug, labels, epoch, epochs, base_en_ratio=0.3, max_en_ratio=0.6, thresholds=args.thresholds, neg_include_self=args.neg_include_self)
+                loss, coverage, en_stats = model.loss_cal_reweighted_FNs_by_ENs(x, x_aug, labels, epoch, epochs, base_en_ratio=0.4, max_en_ratio=0.7, neg_include_self=args.neg_include_self)
                 # === 累加每個 Batch 的指標 ===
-                epoch_en_stats['fn_recall'] += en_stats['fn_recall']
-                epoch_en_stats['fn_wrong_rate'] += en_stats['fn_wrong_rate']
-                epoch_en_stats['fn_precision'] += en_stats['fn_precision']
-                epoch_en_stats['fn_f1'] += en_stats['fn_f1']
-                epoch_en_stats['num_fn_pairs'] += en_stats['num_fn_pairs']
-                epoch_en_stats['fn_ratio'] += en_stats['fn_ratio']
-                epoch_en_stats['avg_fn_confidence'] += en_stats['avg_fn_confidence']
+                epoch_en_stats['soft_fn_recall'] += en_stats['soft_fn_recall']
+                epoch_en_stats['soft_fn_precision'] += en_stats['soft_fn_precision']
+                epoch_en_stats['soft_fn_f1'] += en_stats['soft_fn_f1']
+                epoch_en_stats['avg_coverage'] += en_stats['avg_coverage']
 
                 # 保留當前比例 (這通常隨 epoch 變動，batch 間相同)
                 current_en_ratio_val = en_stats['curr_en_ratio']
@@ -1551,22 +1545,16 @@ if __name__ == '__main__':
         elif args.mode == 'reweight_FNs_by_ENs':
             num_batches = len(dataloader)
             
-            avg_recall = epoch_en_stats['fn_recall'] / num_batches
-            avg_wrong_rate = epoch_en_stats['fn_wrong_rate'] / num_batches
-            avg_precision = epoch_en_stats['fn_precision'] / num_batches
-            avg_f1 = epoch_en_stats['fn_f1'] / num_batches
-            avg_reweighted_count = epoch_en_stats['num_fn_pairs'] / num_batches
-            avg_reweighted_ratio = epoch_en_stats['fn_ratio'] / num_batches
-            avg_fn_confidence = epoch_en_stats['avg_fn_confidence'] / num_batches
+            avg_recall = epoch_en_stats['soft_fn_recall'] / num_batches
+            avg_precision = epoch_en_stats['soft_fn_precision'] / num_batches
+            avg_f1 = epoch_en_stats['soft_fn_f1'] / num_batches
+            avg_coverage = epoch_en_stats['avg_coverage'] / num_batches
 
             writer.add_scalar('EN_FN_Dynamics/Reweight_Recall', avg_recall, epoch)
-            writer.add_scalar('EN_FN_Dynamics/Wrong_Rate_FP_Increased', avg_wrong_rate, epoch)
             writer.add_scalar('EN_FN_Dynamics/Reweight_Precision', avg_precision, epoch)
             writer.add_scalar('EN_FN_Dynamics/Reweight_F1_Score', avg_f1, epoch)
             writer.add_scalar('EN_FN_Dynamics/Current_EN_Ratio', current_en_ratio_val, epoch)
-            writer.add_scalar('FN_Stats/Avg_Reweighted_FN_Count_Per_Batch', avg_reweighted_count, epoch)
-            writer.add_scalar('FN_Stats/Avg_Reweighted_FN_Ratio_Per_Batch', avg_reweighted_ratio, epoch)
-            writer.add_scalar('FN_Stats/Avg_FN_Confidence', avg_fn_confidence, epoch)
+            writer.add_scalar('FN_Stats/Avg_Coverage', avg_coverage, epoch)
 
         print('Epoch {}, Loss {}'.format(epoch, loss_all / len(dataloader.dataset)))
         # print("pos sim = ", pos_sim_all, "; neg sim = ", neg_sim_all)

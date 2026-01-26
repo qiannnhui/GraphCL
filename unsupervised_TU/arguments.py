@@ -49,7 +49,6 @@ def arg_parse():
     parser.add_argument('--hard_sim_threshold', type=float, default=0.8, help='Hard similarity threshold for high similarity negative analysis')
     parser.add_argument("--neg_sim_analysis", action='store_true', help="Enable fixed and dynamic set analysis for FN/HN/EN over epochs")
     parser.add_argument("--en_overlap_threshold", type=float, default=0.7, help="Overlap threshold for EN identification")
-    parser.add_argument('--thresholds', type=float, nargs='+', default=[0.5, 0.6, 0.7, 0.8, 0.9], help='List of thresholds for analysis')
 
     return parser.parse_args()
 
