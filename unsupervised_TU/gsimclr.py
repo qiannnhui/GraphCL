@@ -446,13 +446,13 @@ class simclr(nn.Module):
     return loss, pos_sim_, neg_sim_
 
   def identify_fn_by_en_curriculum(self, sim_matrix, labels, epoch, total_epochs, 
-                               base_en_ratio=0.1, max_en_ratio=0.5, en_overlap_threshold=0.5):
+                               base_en_threshold=0.1, max_en_threshold=0.5, coverage_threshold=0.5):
         """
         分析 EN-based FN 識別的動態指標
         Args:
             sim_matrix: (B, B) 相似度矩陣 (exp(cos/T))
             labels: (B,) 標籤
-            base_en_ratio/max_en_ratio: 用於動態增加 EN 比例
+            base_en_threshold/max_en_threshold: 用於動態增加 EN 比例
         """
         batch_size = sim_matrix.size(0)
         device = sim_matrix.device
@@ -468,14 +468,14 @@ class simclr(nn.Module):
         
         # --- 動態 EN 策略 ---
         # 隨著 Epoch 線性增加觀察 EN 的比例
-        curr_en_ratio = base_en_ratio + (max_en_ratio - base_en_ratio) * (epoch / total_epochs)
-        k = max(1, int(batch_size * curr_en_ratio))
+        curr_en_threshold = base_en_threshold + (max_en_threshold - base_en_threshold) * (epoch / total_epochs)
+        k = max(1, int(batch_size * curr_en_threshold))
         
         # 識別預測的 FN (Pred FN)
         _, en_indices = torch.topk(sim_matrix, k=k, dim=1, largest=False)
         en_mask = torch.zeros_like(sim_matrix).scatter_(1, en_indices, 1.0)
         shared_count = torch.matmul(en_mask, en_mask.T)
-        pred_fn_mask = (shared_count / k >= en_overlap_threshold) & ~diag_mask
+        pred_fn_mask = (shared_count / k >= coverage_threshold) & ~diag_mask
         
         # --- 指標統計 ---
         tp_fn = (pred_fn_mask & gt_fn_mask).sum().float() # 拿對的
@@ -483,42 +483,42 @@ class simclr(nn.Module):
         
 
         # 1. FN 拿對率 (Recall)
-        fn_recall = tp_fn / (total_gt_fn + 1e-8)
+        pFN_recall = tp_fn / (total_gt_fn + 1e-8)
 
         # 2. 移除精準度 (Precision)
-        fn_precision = tp_fn / (pred_fn_mask.sum().float() + 1e-8)
+        pFN_precision = tp_fn / (pred_fn_mask.sum().float() + 1e-8)
 
-        fn_f1 = 2 * (fn_precision * fn_recall) / (fn_precision + fn_recall + 1e-8)
+        pFN_f1 = 2 * (pFN_precision * pFN_recall) / (pFN_precision + pFN_recall + 1e-8)
         
         # 3. FN 拿錯率 (False Alarm Rate / FPR) - 你最關心的指標
-        fn_wrong_rate = fp_fn / (total_gt_tn + 1e-8)
+        pFN_wrong_rate = fp_fn / (total_gt_tn + 1e-8)
         
         # 4. 分母純淨度分析
         denom_mask_after = ~diag_mask & ~pred_fn_mask
         remaining_fn_count = (denom_mask_after & gt_fn_mask).sum().float()
-        remaining_fn_ratio = remaining_fn_count / (denom_mask_after.sum().float() + 1e-8)
-        original_fn_ratio = total_gt_fn / (batch_size * (batch_size - 1) + 1e-8)
+        remaining_pFN_ratio = remaining_fn_count / (denom_mask_after.sum().float() + 1e-8)
+        original_pFN_ratio = total_gt_fn / (batch_size * (batch_size - 1) + 1e-8)
 
         stats = {
-            'fn_recall': fn_recall.item(),
-            'fn_wrong_rate': fn_wrong_rate.item(),
-            'fn_precision': fn_precision.item(),
-            'fn_f1': fn_f1.item(),
-            'remaining_fn_ratio': remaining_fn_ratio.item(),
-            'original_fn_ratio': original_fn_ratio.item(),
-            'curr_en_ratio': curr_en_ratio
+            'pFN_recall': pFN_recall.item(),
+            'pFN_wrong_rate': pFN_wrong_rate.item(),
+            'pFN_precision': pFN_precision.item(),
+            'pFN_f1': pFN_f1.item(),
+            'remaining_pFN_ratio': remaining_pFN_ratio.item(),
+            'original_pFN_ratio': original_pFN_ratio.item(),
+            'curr_en_threshold': curr_en_threshold
         }
         
         return pred_fn_mask, stats
 
-  def identify_fn_by_en(self, sim_matrix, labels, top_k_en=10, en_overlap_threshold=0.5):
+  def identify_fn_by_en(self, sim_matrix, labels, top_k_en=10, coverage_threshold=0.5):
         """
         基於共享 Easy Negatives 識別 False Negatives 並計算指標
         Args:
             sim_matrix: (B, B) 相似度矩陣 (已經過 exp/T)
             labels: (B,) 真實標籤
             top_k_en: 取相似度最低的前 K 個作為 EN 集合
-            en_overlap_threshold: 共享 EN 的比例門檻，超過則判定為 FN
+            coverage_threshold: 共享 EN 的比例門檻，超過則判定為 FN
         """
         batch_size = sim_matrix.size(0)
         device = sim_matrix.device
@@ -537,7 +537,7 @@ class simclr(nn.Module):
         # 4. 計算共享比例並判定推斷出的 FN (Predicted FN)
         # 排除自己 (對角線)
         shared_ratio = shared_count / top_k_en
-        pred_fn_mask = (shared_ratio >= en_overlap_threshold)
+        pred_fn_mask = (shared_ratio >= coverage_threshold)
         diag_mask = torch.eye(batch_size, dtype=torch.bool, device=device)
         pred_fn_mask = pred_fn_mask & ~diag_mask
         
@@ -557,8 +557,8 @@ class simclr(nn.Module):
         
         return pred_fn_mask, precision.item(), recall.item(), f1.item()
   
-#   def loss_cal_rm_FNs_by_ENs(self, x, x_aug, labels, top_k_en=10, en_overlap_threshold=0.5, neg_include_self=True):
-  def loss_cal_rm_FNs_by_ENs(self, x, x_aug, labels, cur_epoch, total_epochs, base_en_ratio=0.1, max_en_ratio=0.5, en_overlap_threshold=0.5, neg_include_self=True):
+#   def loss_cal_rm_FNs_by_ENs(self, x, x_aug, labels, top_k_en=10, coverage_threshold=0.5, neg_include_self=True):
+  def loss_cal_rm_FNs_by_ENs(self, x, x_aug, labels, cur_epoch, total_epochs, base_en_threshold=0.1, max_en_threshold=0.5, coverage_threshold=0.5, neg_include_self=True):
         T = 0.2
         num_samples, _ = x.size()
         # 計算全矩陣相似度
@@ -567,21 +567,21 @@ class simclr(nn.Module):
         # 使用我們新寫的函數
         # top_k 可以設為 batch_size 的 20%~30%
         # pred_fn_mask, prec, rec, f1_score = self.identify_fn_by_en(
-        #     sim_matrix, labels, top_k_en=top_k_en, en_overlap_threshold=en_overlap_threshold
+        #     sim_matrix, labels, top_k_en=top_k_en, coverage_threshold=coverage_threshold
         # )
         pred_fn_mask, en_stats = self.identify_fn_by_en_curriculum(
                     sim_matrix, labels, cur_epoch, total_epochs,
-                    base_en_ratio=base_en_ratio, max_en_ratio=max_en_ratio, en_overlap_threshold=en_overlap_threshold
+                    base_en_threshold=base_en_threshold, max_en_threshold=max_en_threshold, coverage_threshold=coverage_threshold
                 )
         
-        num_deleted_fn = pred_fn_mask.sum().item()
+        num_deleted_pFN = pred_fn_mask.sum().item()
         # 總負樣本對數量 (不含對角線) 為 N * (N - 1)
         total_neg_pairs = batch_size * (batch_size - 1)
-        fn_ratio = num_deleted_fn / (total_neg_pairs + 1e-8)
+        pFN_ratio = num_deleted_pFN / (total_neg_pairs + 1e-8)
         
         # 將這些資訊加入 en_stats 回傳
-        en_stats['num_deleted_fn'] = num_deleted_fn
-        en_stats['fn_ratio_in_batch'] = fn_ratio
+        en_stats['num_deleted_pFN'] = num_deleted_pFN
+        en_stats['pFN_ratio_in_batch'] = pFN_ratio
 
         # --- 計算 Loss ---
         self_pos = sim_matrix.diag() # (B,)
@@ -602,14 +602,14 @@ class simclr(nn.Module):
         # return loss, prec, rec, f1_score
 
   def identify_fn_by_en_coverage(self, sim_matrix, labels, epoch, total_epochs, 
-                                   base_en_ratio=0.3, max_en_ratio=0.6):
+                                   base_en_threshold=0.3, max_en_threshold=0.6):
         batch_size = sim_matrix.size(0)
         device = sim_matrix.device
         diag_mask = torch.eye(batch_size, dtype=torch.bool, device=device)
         
         # 1. 動態計算 EN 數量 k
-        curr_en_ratio = base_en_ratio + (max_en_ratio - base_en_ratio) * (epoch / total_epochs)
-        k = max(1, int(batch_size * curr_en_ratio))
+        curr_en_threshold = base_en_threshold + (max_en_threshold - base_en_threshold) * (epoch / total_epochs)
+        k = max(1, int(batch_size * curr_en_threshold))
         
         # 2. 獲取 EN 掩碼
         _, en_indices = torch.topk(sim_matrix, k=k, dim=1, largest=False)
@@ -637,29 +637,33 @@ class simclr(nn.Module):
         soft_f1 = (2 * soft_precision * soft_recall) / (soft_precision + soft_recall + 1e-8)
         
         stats = {
-            'soft_fn_recall': soft_recall.item(),
-            'soft_fn_precision': soft_precision.item(),
-            'soft_fn_f1': soft_f1.item(),
+            'soft_pFN_recall': soft_recall.item(),
+            'soft_pFN_precision': soft_precision.item(),
+            'soft_pFN_f1': soft_f1.item(),
             'avg_coverage': coverage[gt_fn_mask.bool()].mean().item() if gt_fn_mask.any() else 0,
-            'curr_en_ratio': curr_en_ratio
+            'curr_en_threshold': curr_en_threshold
         }
         
         return coverage, stats
 
   def loss_cal_reweighted_FNs_by_ENs(self, x, x_aug, labels, cur_epoch, total_epochs, 
-                                       base_en_ratio=0.3, max_en_ratio=0.6, neg_include_self=True):
+                                       base_en_threshold=0.3, max_en_threshold=0.6, neg_include_self=True, reweight_strategy="1-coverage", coverage_threshold=0.5):
         T = 0.2
         batch_size, _ = x.size()
         sim_matrix = torch.exp(torch.mm(F.normalize(x, dim=1), F.normalize(x_aug, dim=1).T) / T)
         
         # 使用 Coverage 邏輯
         coverage, stats = self.identify_fn_by_en_coverage(
-            sim_matrix, labels, cur_epoch, total_epochs, base_en_ratio, max_en_ratio
+            sim_matrix, labels, cur_epoch, total_epochs, base_en_threshold, max_en_threshold
         )
         
         # 權重分配：Coverage 越高 (越可能是 FN)，負樣本的權重越低
         # W = 1 - Coverage
-        negative_weights = 1.0 - coverage
+        if reweight_strategy == "1-coverage":
+            negative_weights = 1.0 - coverage
+        # 改成只對 coverage > 0.5 的部分進行權重調整
+        elif reweight_strategy == "thresholded":
+            negative_weights = torch.where(coverage > coverage_threshold, 1.0 - coverage, torch.ones_like(coverage))
         
         self_pos = sim_matrix.diag()
         diag_mask = torch.eye(batch_size, dtype=torch.bool, device=x.device)
@@ -1330,18 +1334,18 @@ if __name__ == '__main__':
         total_fn_missed = 0
         if args.mode == 'rm_FNs_by_ENs':
                     epoch_en_stats = {
-                        'fn_recall': 0.0,
-                        'fn_wrong_rate': 0.0,
-                        'fn_precision': 0.0,
-                        'fn_f1': 0.0,
-                        'num_deleted_fn': 0.0,
-                        'fn_ratio': 0.0
+                        'pFN_recall': 0.0,
+                        'pFN_wrong_rate': 0.0,
+                        'pFN_precision': 0.0,
+                        'pFN_f1': 0.0,
+                        'num_deleted_pFN': 0.0,
+                        'pFN_ratio': 0.0
                     }
         if args.mode == 'reweight_FNs_by_ENs':
                     epoch_en_stats = {
-                        'soft_fn_recall': 0.0,
-                        'soft_fn_precision': 0.0,
-                        'soft_fn_f1': 0.0,
+                        'soft_pFN_recall': 0.0,
+                        'soft_pFN_precision': 0.0,
+                        'soft_pFN_f1': 0.0,
                         'avg_coverage': 0.0
                     }
         if args.get_f1_scores_by_deg_boundary:
@@ -1482,25 +1486,25 @@ if __name__ == '__main__':
             elif args.mode == 'reweighted_by_angle':
                 loss, pos_sim, neg_sim = model.reweighted_by_angle(x, x_aug, deg_boundary=args.rotate_angle_deg)
             elif args.mode == 'rm_FNs_by_ENs':
-                loss, en_stats = model.loss_cal_rm_FNs_by_ENs(x, x_aug, labels, epoch, epochs, base_en_ratio=0.3, max_en_ratio=0.6, en_overlap_threshold=args.en_overlap_threshold, neg_include_self=args.neg_include_self)
+                loss, en_stats = model.loss_cal_rm_FNs_by_ENs(x, x_aug, labels, epoch, epochs, base_en_threshold=args.base_en_threshold, max_en_threshold=args.max_en_threshold, coverage_threshold=args.coverage_threshold, neg_include_self=args.neg_include_self)
                 # === 累加每個 Batch 的指標 ===
-                epoch_en_stats['fn_recall'] += en_stats['fn_recall']
-                epoch_en_stats['fn_wrong_rate'] += en_stats['fn_wrong_rate']
-                epoch_en_stats['fn_precision'] += en_stats['fn_precision']
-                epoch_en_stats['fn_f1'] += en_stats['fn_f1']
-                epoch_en_stats['num_deleted_fn'] += en_stats['num_deleted_fn']
-                epoch_en_stats['fn_ratio'] += en_stats['fn_ratio_in_batch']
+                epoch_en_stats['pFN_recall'] += en_stats['pFN_recall']
+                epoch_en_stats['pFN_wrong_rate'] += en_stats['pFN_wrong_rate']
+                epoch_en_stats['pFN_precision'] += en_stats['pFN_precision']
+                epoch_en_stats['pFN_f1'] += en_stats['pFN_f1']
+                epoch_en_stats['num_deleted_pFN'] += en_stats['num_deleted_pFN']
+                epoch_en_stats['pFN_ratio'] += en_stats['pFN_ratio_in_batch']
 
             elif args.mode == 'reweight_FNs_by_ENs':
-                loss, coverage, en_stats = model.loss_cal_reweighted_FNs_by_ENs(x, x_aug, labels, epoch, epochs, base_en_ratio=0.4, max_en_ratio=0.7, neg_include_self=args.neg_include_self)
+                loss, coverage, en_stats = model.loss_cal_reweighted_FNs_by_ENs(x, x_aug, labels, epoch, epochs, base_en_threshold=args.base_en_threshold, max_en_threshold=args.max_en_threshold, neg_include_self=args.neg_include_self, reweight_strategy=args.reweight_strategy, coverage_threshold=args.coverage_threshold)
                 # === 累加每個 Batch 的指標 ===
-                epoch_en_stats['soft_fn_recall'] += en_stats['soft_fn_recall']
-                epoch_en_stats['soft_fn_precision'] += en_stats['soft_fn_precision']
-                epoch_en_stats['soft_fn_f1'] += en_stats['soft_fn_f1']
+                epoch_en_stats['soft_pFN_recall'] += en_stats['soft_pFN_recall']
+                epoch_en_stats['soft_pFN_precision'] += en_stats['soft_pFN_precision']
+                epoch_en_stats['soft_pFN_f1'] += en_stats['soft_pFN_f1']
                 epoch_en_stats['avg_coverage'] += en_stats['avg_coverage']
 
                 # 保留當前比例 (這通常隨 epoch 變動，batch 間相同)
-                current_en_ratio_val = en_stats['curr_en_ratio']
+                current_en_threshold_val = en_stats['curr_en_threshold']
             else:
                 # Handles all other unmatched modes
                 raise RuntimeError(f"no mode matching {args.mode}, input should be: normal, TPs_TNs, etc.")
@@ -1564,36 +1568,36 @@ if __name__ == '__main__':
         elif args.mode == 'rm_FNs_by_ENs':
             num_batches = len(dataloader)
             
-            avg_recall = epoch_en_stats['fn_recall'] / num_batches
-            avg_wrong_rate = epoch_en_stats['fn_wrong_rate'] / num_batches
-            avg_precision = epoch_en_stats['fn_precision'] / num_batches
-            avg_f1 = epoch_en_stats['fn_f1'] / num_batches
-            avg_deleted_count = epoch_en_stats['num_deleted_fn'] / num_batches
-            avg_deleted_ratio = epoch_en_stats['fn_ratio'] / num_batches
+            avg_recall = epoch_en_stats['pFN_recall'] / num_batches
+            avg_wrong_rate = epoch_en_stats['pFN_wrong_rate'] / num_batches
+            avg_precision = epoch_en_stats['pFN_precision'] / num_batches
+            avg_f1 = epoch_en_stats['pFN_f1'] / num_batches
+            avg_deleted_count = epoch_en_stats['num_deleted_pFN'] / num_batches
+            avg_deleted_ratio = epoch_en_stats['pFN_ratio'] / num_batches
 
             writer.add_scalar('EN_FN_Dynamics/Removal_Recall', avg_recall, epoch)
             writer.add_scalar('EN_FN_Dynamics/Wrong_Rate_TN_Killed', avg_wrong_rate, epoch)
             writer.add_scalar('EN_FN_Dynamics/Removal_Precision', avg_precision, epoch)
             writer.add_scalar('EN_FN_Dynamics/Removal_F1_Score', avg_f1, epoch)
-            writer.add_scalar('EN_FN_Dynamics/Current_EN_Ratio', current_en_ratio_val, epoch)
+            writer.add_scalar('EN_FN_Dynamics/Current_EN_THRESHOLD', current_en_threshold_val, epoch)
             writer.add_scalar('FN_Stats/Avg_Deleted_FN_Count_Per_Batch', avg_deleted_count, epoch)
             writer.add_scalar('FN_Stats/Avg_Deleted_FN_Ratio_Per_Batch', avg_deleted_ratio, epoch)
             writer.add_scalars('EN_FN_Dynamics/Purity_Check', {
-                'Cleaned_FN_Ratio': en_stats['remaining_fn_ratio'],
-                'Original_FN_Ratio': en_stats['original_fn_ratio']
+                'Cleaned_FN_Ratio': en_stats['remaining_pFN_ratio'],
+                'Original_FN_Ratio': en_stats['original_pFN_ratio']
             }, epoch)
         elif args.mode == 'reweight_FNs_by_ENs':
             num_batches = len(dataloader)
             
-            avg_recall = epoch_en_stats['soft_fn_recall'] / num_batches
-            avg_precision = epoch_en_stats['soft_fn_precision'] / num_batches
-            avg_f1 = epoch_en_stats['soft_fn_f1'] / num_batches
+            avg_recall = epoch_en_stats['soft_pFN_recall'] / num_batches
+            avg_precision = epoch_en_stats['soft_pFN_precision'] / num_batches
+            avg_f1 = epoch_en_stats['soft_pFN_f1'] / num_batches
             avg_coverage = epoch_en_stats['avg_coverage'] / num_batches
 
             writer.add_scalar('EN_FN_Dynamics/Reweight_Recall', avg_recall, epoch)
             writer.add_scalar('EN_FN_Dynamics/Reweight_Precision', avg_precision, epoch)
             writer.add_scalar('EN_FN_Dynamics/Reweight_F1_Score', avg_f1, epoch)
-            writer.add_scalar('EN_FN_Dynamics/Current_EN_Ratio', current_en_ratio_val, epoch)
+            writer.add_scalar('EN_FN_Dynamics/Current_EN_THRESHOLD', current_en_threshold_val, epoch)
             writer.add_scalar('FN_Stats/Avg_Coverage', avg_coverage, epoch)
 
         print('Epoch {}, Loss {}'.format(epoch, loss_all / len(dataloader.dataset)))

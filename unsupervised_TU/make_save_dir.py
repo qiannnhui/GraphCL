@@ -20,7 +20,9 @@ def make_save_dir(base="./result", args=None, extra=None, add_timestamp=False):
         ("rotate_angle_deg", args.rotate_angle_deg) if args.mode=="reweighted_by_angle" and hasattr(args, "rotate_angle_deg") and hasattr(args, "rotate") else None,
         ("shuffle_DBN", args.shuffle_DBN) if args.shuffle_DBN else None,
         ("or_loss", args.or_loss) if args.or_loss else None,
-        ("en_overlap_threshold", args.en_overlap_threshold) if args.mode=="rm_FNs_by_ENs" and hasattr(args, "en_overlap_threshold") else None,
+        ("EN_THRESHOLD", f"{args.base_en_threshold}-{args.max_en_threshold}") if args.mode in ["rm_FNs_by_ENs", "reweight_FNs_by_ENs"] and hasattr(args, "base_en_threshold") and hasattr(args, "max_en_threshold") else None,
+        ("Reweight_Strategy", args.reweight_strategy) if args.mode=="reweight_FNs_by_ENs" and hasattr(args, "reweight_strategy") else None,
+        ("Coverage_Threshold", args.coverage_threshold) if args.mode=="rm_FNs_by_ENs" or (args.mode == "reweight_FNs_by_ENs" and getattr(args, "reweight_strategy", "") == "thresholded") and hasattr(args, "coverage_threshold") else None,
     ]
     path_hierarchy = [item for item in path_hierarchy if item is not None]
 
