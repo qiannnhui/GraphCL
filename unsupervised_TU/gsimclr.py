@@ -601,6 +601,49 @@ class simclr(nn.Module):
         return loss, en_stats
         # return loss, prec, rec, f1_score
 
+  def calculate_ranking_metrics(self, sim_matrix, labels, k_list=[1, 5, 10]):
+        device = sim_matrix.device
+        batch_size = sim_matrix.size(0)
+        
+        # 1. 建立 Ground Truth Mask (排除自己)
+        labels_col = labels.view(-1, 1)
+        gt_mask = labels_col.eq(labels_col.T).float()
+        diag_mask = torch.eye(batch_size, device=device).bool()
+        
+        # 核心修正：只取出非對角線的元素，讓每行變成 batch_size - 1
+        # 我們利用 mask 提取出每一行除了自己以外的其他樣本
+        # 這裡用 reshape(-1) 處理會比較麻煩，建議用 masked_select 再 view
+        gt_mask_no_self = gt_mask[~diag_mask].view(batch_size, batch_size - 1)
+        sim_matrix_no_self = sim_matrix[~diag_mask].view(batch_size, batch_size - 1)
+
+        # 2. 排序剩餘的樣本 (B, B-1)
+        _, indices = torch.sort(sim_matrix_no_self, descending=True, dim=1)
+        ranked_gt = torch.gather(gt_mask_no_self, 1, indices)
+
+        results = {}
+        # --- 計算 Recall@K ---
+        for k in k_list:
+            if k < batch_size:
+                # 只要前 k 個裡面有任何一個同類，Recall@K 就計為 1
+                recall_at_k = (ranked_gt[:, :k].sum(dim=1) > 0).float().mean()
+                results[f'Recall@{k}'] = recall_at_k.item()
+
+        # --- 計算 mAP ---
+        # ranked_gt 維度現在是 (B, 127)
+        cumsum_gt = torch.cumsum(ranked_gt, dim=1) 
+        # range_vec 長度也是 127
+        range_vec = torch.arange(1, batch_size, device=device).float() 
+        
+        precision_at_i = cumsum_gt / range_vec # 現在都是 127，可以相除
+        
+        relevant_precision = precision_at_i * ranked_gt
+        num_relevant = gt_mask_no_self.sum(dim=1)
+        
+        ap = relevant_precision.sum(dim=1) / (num_relevant + 1e-8)
+        results['mAP'] = ap[num_relevant > 0].mean().item() if (num_relevant > 0).any() else 0
+
+        return results
+
   def identify_fn_by_en_coverage(self, sim_matrix, labels, epoch, total_epochs, 
                                    base_en_threshold=0.3, max_en_threshold=0.6):
         batch_size = sim_matrix.size(0)
@@ -643,6 +686,8 @@ class simclr(nn.Module):
             'avg_coverage': coverage[gt_fn_mask.bool()].mean().item() if gt_fn_mask.any() else 0,
             'curr_en_threshold': curr_en_threshold
         }
+        ranking_stats = self.calculate_ranking_metrics(sim_matrix, labels, k_list=[1, 5, 10])
+        stats.update(ranking_stats)
         
         return coverage, stats
 
