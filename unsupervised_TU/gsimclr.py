@@ -1400,7 +1400,11 @@ if __name__ == '__main__':
                         'soft_pFN_recall': 0.0,
                         'soft_pFN_precision': 0.0,
                         'soft_pFN_f1': 0.0,
-                        'avg_coverage': 0.0
+                        'avg_coverage': 0.0,
+                        'Recall@1': 0.0,
+                        'Recall@5': 0.0,
+                        'Recall@10': 0.0,
+                        'mAP': 0.0
                     }
         if args.get_f1_scores_by_deg_boundary:
             all_x_embeddings = []
@@ -1556,6 +1560,10 @@ if __name__ == '__main__':
                 epoch_en_stats['soft_pFN_precision'] += en_stats['soft_pFN_precision']
                 epoch_en_stats['soft_pFN_f1'] += en_stats['soft_pFN_f1']
                 epoch_en_stats['avg_coverage'] += en_stats['avg_coverage']
+                epoch_en_stats['Recall@1'] += en_stats.get('Recall@1', 0)
+                epoch_en_stats['Recall@5'] += en_stats.get('Recall@5', 0)
+                epoch_en_stats['Recall@10'] += en_stats.get('Recall@10', 0)
+                epoch_en_stats['mAP'] += en_stats.get('mAP', 0)
 
                 # 保留當前比例 (這通常隨 epoch 變動，batch 間相同)
                 current_en_threshold_val = en_stats['curr_en_threshold']
@@ -1647,12 +1655,20 @@ if __name__ == '__main__':
             avg_precision = epoch_en_stats['soft_pFN_precision'] / num_batches
             avg_f1 = epoch_en_stats['soft_pFN_f1'] / num_batches
             avg_coverage = epoch_en_stats['avg_coverage'] / num_batches
+            avg_recall_k = {
+                'R@1': epoch_en_stats['Recall@1'] / num_batches,
+                'R@5': epoch_en_stats['Recall@5'] / num_batches,
+                'R@10': epoch_en_stats['Recall@10'] / num_batches,
+            }
+            avg_map = epoch_en_stats['mAP'] / num_batches
 
             writer.add_scalar('EN_FN_Dynamics/Reweight_Recall', avg_recall, epoch)
             writer.add_scalar('EN_FN_Dynamics/Reweight_Precision', avg_precision, epoch)
             writer.add_scalar('EN_FN_Dynamics/Reweight_F1_Score', avg_f1, epoch)
             writer.add_scalar('EN_FN_Dynamics/Current_EN_THRESHOLD', current_en_threshold_val, epoch)
             writer.add_scalar('FN_Stats/Avg_Coverage', avg_coverage, epoch)
+            writer.add_scalars('Ranking_Performance/Recall_at_K', avg_recall_k, epoch)
+            writer.add_scalar('Ranking_Performance/mAP', avg_map, epoch)
 
         print('Epoch {}, Loss {}'.format(epoch, loss_all / len(dataloader.dataset)))
         # print("pos sim = ", pos_sim_all, "; neg sim = ", neg_sim_all)
