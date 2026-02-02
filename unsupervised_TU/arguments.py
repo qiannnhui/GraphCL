@@ -52,6 +52,7 @@ def arg_parse():
     parser.add_argument('--reweight_strategy', type=str, default='1-coverage', help='Reweighting strategy for negatives: 1-coverage, thresholded, none')
     parser.add_argument('--base_en_threshold', type=float, default=0.4, help='Base overlap threshold for EN identification')
     parser.add_argument('--max_en_threshold', type=float, default=0.7, help='Max overlap threshold for EN identification')
+    parser.add_argument('--renormalization', action='store_true', help='Apply renormalization to weights')
 
     return parser.parse_args()
 

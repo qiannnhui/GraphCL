@@ -23,6 +23,7 @@ def make_save_dir(base="./result", args=None, extra=None, add_timestamp=False):
         ("EN_THRESHOLD", f"{args.base_en_threshold}-{args.max_en_threshold}") if args.mode in ["rm_FNs_by_ENs", "reweight_FNs_by_ENs"] and hasattr(args, "base_en_threshold") and hasattr(args, "max_en_threshold") else None,
         ("Reweight_Strategy", args.reweight_strategy) if args.mode=="reweight_FNs_by_ENs" and hasattr(args, "reweight_strategy") else None,
         ("Coverage_Threshold", args.coverage_threshold) if args.mode=="rm_FNs_by_ENs" or (args.mode == "reweight_FNs_by_ENs" and getattr(args, "reweight_strategy", "") == "thresholded") and hasattr(args, "coverage_threshold") else None,
+        ("Renormalization", args.renormalization) if args.renormalization else None,
     ]
     path_hierarchy = [item for item in path_hierarchy if item is not None]
 

@@ -647,34 +647,43 @@ class simclr(nn.Module):
         return coverage, stats
 
   def loss_cal_reweighted_FNs_by_ENs(self, x, x_aug, labels, cur_epoch, total_epochs, 
-                                       base_en_threshold=0.3, max_en_threshold=0.6, neg_include_self=True, reweight_strategy="1-coverage", coverage_threshold=0.5):
+                                       base_en_threshold=0.3, max_en_threshold=0.6, 
+                                       neg_include_self=True, reweight_strategy="1-coverage", 
+                                       coverage_threshold=0.5, renormalization=True):
         T = 0.2
         batch_size, _ = x.size()
         sim_matrix = torch.exp(torch.mm(F.normalize(x, dim=1), F.normalize(x_aug, dim=1).T) / T)
         
-        # 使用 Coverage 邏輯
         coverage, stats = self.identify_fn_by_en_coverage(
             sim_matrix, labels, cur_epoch, total_epochs, base_en_threshold, max_en_threshold
         )
         
-        # 權重分配：Coverage 越高 (越可能是 FN)，負樣本的權重越低
-        # W = 1 - Coverage
         if reweight_strategy == "1-coverage":
             negative_weights = 1.0 - coverage
-        # 改成只對 coverage > 0.5 的部分進行權重調整
         elif reweight_strategy == "thresholded":
             negative_weights = torch.where(coverage > coverage_threshold, 1.0 - coverage, torch.ones_like(coverage))
-        
-        self_pos = sim_matrix.diag()
+        else:
+            negative_weights = torch.ones_like(coverage)
+
         diag_mask = torch.eye(batch_size, dtype=torch.bool, device=x.device)
-        
         if not neg_include_self:
             negative_weights = negative_weights.masked_fill(diag_mask, 0.0)
+            target_sum = float(batch_size - 1) # 每個 anchor 應該對應的總推力
         else:
             negative_weights = negative_weights.masked_fill(diag_mask, 1.0)
-            
-        weighted_neg_sim = (sim_matrix * negative_weights).sum(dim=1)
+            target_sum = float(batch_size)
+
+        # Renormalize weights to maintain the same total contribution as normal InfoNCE
+        if renormalization:
+            current_sum = negative_weights.sum(dim=1, keepdim=True) # (B, 1)
+            scale_factor = target_sum / (current_sum + 1e-8)
+            normalized_weights = negative_weights * scale_factor
+        
+        self_pos = sim_matrix.diag()
+        weighted_neg_sim = (sim_matrix * normalized_weights).sum(dim=1)
         loss = -torch.log(self_pos / (weighted_neg_sim + 1e-8) + 1e-8).mean()
+
+        stats['avg_scale_factor'] = scale_factor.mean().item()
 
         return loss, coverage, stats
 
@@ -1496,7 +1505,7 @@ if __name__ == '__main__':
                 epoch_en_stats['pFN_ratio'] += en_stats['pFN_ratio_in_batch']
 
             elif args.mode == 'reweight_FNs_by_ENs':
-                loss, coverage, en_stats = model.loss_cal_reweighted_FNs_by_ENs(x, x_aug, labels, epoch, epochs, base_en_threshold=args.base_en_threshold, max_en_threshold=args.max_en_threshold, neg_include_self=args.neg_include_self, reweight_strategy=args.reweight_strategy, coverage_threshold=args.coverage_threshold)
+                loss, coverage, en_stats = model.loss_cal_reweighted_FNs_by_ENs(x, x_aug, labels, epoch, epochs, base_en_threshold=args.base_en_threshold, max_en_threshold=args.max_en_threshold, neg_include_self=args.neg_include_self, reweight_strategy=args.reweight_strategy, coverage_threshold=args.coverage_threshold, renormalization=args.renormalization)
                 # === 累加每個 Batch 的指標 ===
                 epoch_en_stats['soft_pFN_recall'] += en_stats['soft_pFN_recall']
                 epoch_en_stats['soft_pFN_precision'] += en_stats['soft_pFN_precision']
