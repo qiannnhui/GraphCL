@@ -24,6 +24,8 @@ def make_save_dir(base="./result", args=None, extra=None, add_timestamp=False):
         ("Reweight_Strategy", args.reweight_strategy) if args.mode=="reweight_FNs_by_ENs" and hasattr(args, "reweight_strategy") else None,
         ("Coverage_Threshold", args.coverage_threshold) if args.mode=="rm_FNs_by_ENs" or (args.mode == "reweight_FNs_by_ENs" and getattr(args, "reweight_strategy", "") == "thresholded") and hasattr(args, "coverage_threshold") else None,
         ("Renormalization", args.renormalization) if args.renormalization else None,
+        ("RPO_anchor", args.RPO_anchor) if args.RPO_anchor else None,
+        ("denominator_anchor", args.denominator_anchor) if args.denominator_anchor else None,
     ]
     path_hierarchy = [item for item in path_hierarchy if item is not None]
 

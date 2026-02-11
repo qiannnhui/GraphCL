@@ -156,13 +156,14 @@ def get_pair_angles(
 def unified_loss(x: torch.Tensor, x_aug: torch.Tensor, labels: torch.Tensor, T: float = 0.2,
                      sim_measure: str = "cosine",
                      pos_strategy: Literal['normal', 'sum_tp', 'sum_fp', 'sum_all_pos', 'sum_sample_tp', 'sum_sample_fp'] = 'normal', 
-                     neg_strategy: Literal['normal', 'sum_tn', 'sum_fn', 'sum_sample_tn', 'sum_sample_fn', 'normalized_normal'] = 'normal',
+                     neg_strategy: Literal['normal', 'sum_tn', 'sum_fn', 'sum_sample_tn', 'sum_sample_fn', 'normalized_normal', 'denominator_anchor'] = 'normal',
                      pos_num_samples: int = 10,
                      neg_num_samples: int = 10,
                      neg_include_self: bool = False):
     
     device = x.device
     sim_matrix = get_similarity_matrix(x=x, x_aug=x_aug, similarity_measure=sim_measure, T=T)
+    sim_matrix_anchor = get_similarity_matrix(x=x, x_aug=x, similarity_measure=sim_measure, T=T) # 用於 neg_include_self 的情況
     TP_mask, TN_mask, diag_mask = create_tptn_masks(labels, device)
     # Positives
     if pos_strategy == 'normal':
@@ -199,6 +200,10 @@ def unified_loss(x: torch.Tensor, x_aug: torch.Tensor, labels: torch.Tensor, T: 
     if neg_strategy == 'normal':
         # Standard InfoNCE Negative: N = Total Sum - P(Self)
         N_sum = sim_matrix.sum(dim=1) - sim_matrix.diag()
+    
+    elif neg_strategy == 'denominator_anchor':
+        # Denominator Anchor: N = Total Sum - P(Self) using anchor-anchor similarity
+        N_sum = sim_matrix_anchor.sum(dim=1) - sim_matrix_anchor.diag()
 
     elif neg_strategy == 'sum_tn':
         # Sum of Labeled Pairs: N = Sum(TNs)

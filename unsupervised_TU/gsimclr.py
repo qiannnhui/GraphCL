@@ -793,12 +793,16 @@ class simclr(nn.Module):
 
   def loss_cal_reweighted_FNs_by_RPO(self, x, x_aug, labels, cur_epoch=0, total_epochs=0, 
                                        neg_include_self=True, reweight_strategy="1-coverage", 
-                                       coverage_threshold=0.5, renormalization=True):
+                                       coverage_threshold=0.5, renormalization=True, RPO_anchor=False, denominator_anchor=False):
         T = 0.2
         batch_size, _ = x.size()
         sim_matrix = torch.exp(torch.mm(F.normalize(x, dim=1), F.normalize(x_aug, dim=1).T) / T)
+        sim_matrix_anchor = torch.exp(torch.mm(F.normalize(x, dim=1), F.normalize(x, dim=1).T) / T)
         
-        coverage, stats = self.identify_fn_by_rbo_coverage(sim_matrix, labels, p=0.9)
+        if RPO_anchor:
+            coverage, stats = self.identify_fn_by_rbo_coverage(sim_matrix_anchor, labels, p=0.9)
+        else:
+            coverage, stats = self.identify_fn_by_rbo_coverage(sim_matrix, labels, p=0.9)
         
         if reweight_strategy == "1-coverage":
             negative_weights = 1.0 - coverage
@@ -822,7 +826,7 @@ class simclr(nn.Module):
             normalized_weights = negative_weights * scale_factor
         
         self_pos = sim_matrix.diag()
-        weighted_neg_sim = (sim_matrix * normalized_weights).sum(dim=1)
+        weighted_neg_sim = (sim_matrix * normalized_weights).sum(dim=1) if not denominator_anchor else (sim_matrix_anchor * normalized_weights).sum(dim=1)
         loss = -torch.log(self_pos / (weighted_neg_sim + 1e-8) + 1e-8).mean()
 
         stats['avg_scale_factor'] = scale_factor.mean().item()
@@ -1575,7 +1579,10 @@ if __name__ == '__main__':
             # Assuming model.loss_cal_reweighted and model.reweighted_l2_loss are defined for reweighted modes.
             if args.mode == 'normal':
                 # Standard InfoNCE (Self-Pos / All Negs)
-                loss, pos_sim, neg_sim = unified_loss(x, x_aug, labels, sim_measure=args.similarity_measure)
+                if args.denominator_anchor:
+                    loss, pos_sim, neg_sim = unified_loss(x, x_aug, labels, pos_strategy='normal', neg_strategy='denominator_anchor', sim_measure=args.similarity_measure)
+                else:
+                    loss, pos_sim, neg_sim = unified_loss(x, x_aug, labels, sim_measure=args.similarity_measure)
 
             elif args.mode == 'TP1_normal':
                 # P = S(x_i, x_i+ sampled), N = All Negs
@@ -1672,7 +1679,7 @@ if __name__ == '__main__':
                 # 保留當前比例 (這通常隨 epoch 變動，batch 間相同)
                 # current_en_threshold_val = en_stats['curr_en_threshold']
             elif args.mode == 'reweight_FNs_by_RPO':
-                loss, coverage, en_stats = model.loss_cal_reweighted_FNs_by_RPO(x, x_aug, labels, neg_include_self=args.neg_include_self, reweight_strategy=args.reweight_strategy, coverage_threshold=args.coverage_threshold, renormalization=args.renormalization)
+                loss, coverage, en_stats = model.loss_cal_reweighted_FNs_by_RPO(x, x_aug, labels, neg_include_self=args.neg_include_self, reweight_strategy=args.reweight_strategy, coverage_threshold=args.coverage_threshold, renormalization=args.renormalization, RPO_anchor=args.RPO_anchor, denominator_anchor=args.denominator_anchor)
                 epoch_en_stats['soft_pFN_recall'] += en_stats['soft_pFN_recall']
                 epoch_en_stats['soft_pFN_precision'] += en_stats['soft_pFN_precision']
                 epoch_en_stats['soft_pFN_f1'] += en_stats['soft_pFN_f1']

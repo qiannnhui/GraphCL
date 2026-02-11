@@ -53,6 +53,8 @@ def arg_parse():
     parser.add_argument('--base_en_threshold', type=float, default=0.4, help='Base overlap threshold for EN identification')
     parser.add_argument('--max_en_threshold', type=float, default=0.7, help='Max overlap threshold for EN identification')
     parser.add_argument('--renormalization', action='store_true', help='Apply renormalization to weights')
+    parser.add_argument('--RPO_anchor', action='store_true', help='Use anchor instead of aug pair to select FN by RPO')
+    parser.add_argument('--denominator_anchor', action='store_true', help='Use anchor instead of aug pair in denominator for loss calculation')
 
     return parser.parse_args()
 
