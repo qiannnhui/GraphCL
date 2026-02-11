@@ -690,7 +690,6 @@ class simclr(nn.Module):
         stats.update(ranking_stats)
         
         return coverage, stats
-
   def loss_cal_reweighted_FNs_by_ENs(self, x, x_aug, labels, cur_epoch, total_epochs, 
                                        base_en_threshold=0.3, max_en_threshold=0.6, 
                                        neg_include_self=True, reweight_strategy="1-coverage", 
@@ -702,6 +701,104 @@ class simclr(nn.Module):
         coverage, stats = self.identify_fn_by_en_coverage(
             sim_matrix, labels, cur_epoch, total_epochs, base_en_threshold, max_en_threshold
         )
+        
+        if reweight_strategy == "1-coverage":
+            negative_weights = 1.0 - coverage
+        elif reweight_strategy == "thresholded":
+            negative_weights = torch.where(coverage > coverage_threshold, 1.0 - coverage, torch.ones_like(coverage))
+        else:
+            negative_weights = torch.ones_like(coverage)
+
+        diag_mask = torch.eye(batch_size, dtype=torch.bool, device=x.device)
+        if not neg_include_self:
+            negative_weights = negative_weights.masked_fill(diag_mask, 0.0)
+            target_sum = float(batch_size - 1) # 每個 anchor 應該對應的總推力
+        else:
+            negative_weights = negative_weights.masked_fill(diag_mask, 1.0)
+            target_sum = float(batch_size)
+
+        # Renormalize weights to maintain the same total contribution as normal InfoNCE
+        if renormalization:
+            current_sum = negative_weights.sum(dim=1, keepdim=True) # (B, 1)
+            scale_factor = target_sum / (current_sum + 1e-8)
+            normalized_weights = negative_weights * scale_factor
+        
+        self_pos = sim_matrix.diag()
+        weighted_neg_sim = (sim_matrix * normalized_weights).sum(dim=1)
+        loss = -torch.log(self_pos / (weighted_neg_sim + 1e-8) + 1e-8).mean()
+
+        stats['avg_scale_factor'] = scale_factor.mean().item()
+
+        return loss, coverage, stats
+
+  def identify_fn_by_rbo_coverage(self, sim_matrix, labels, p=0.9):
+    """
+    使用純 RBO 權重計算樣本間的 Coverage。
+    sim_matrix: [B, B] 相似度矩陣
+    p: RBO 的持久度參數，越小越看重 Top 排名
+    """
+    batch_size = sim_matrix.size(0)
+    device = sim_matrix.device
+    diag_mask = torch.eye(batch_size, dtype=torch.bool, device=device)
+    
+    # 1. 獲取排序索引 (相似度由高到低，即最相似的排在前面)
+    # sorted_indices: [batch_size, batch_size]
+    _, sorted_indices = torch.sort(sim_matrix, dim=1, descending=True)
+    
+    # 2. 初始化變數
+    coverage = torch.zeros_like(sim_matrix)
+    current_top_masks = torch.zeros_like(sim_matrix)
+    
+    # 3. 遍歷所有深度 d (從 1 到 batch_size)
+    # 這裡直接計算完整的 RBO 權重加總
+    for d in range(1, batch_size + 1):
+        # 標記每個樣本在深度 d 的項目
+        rank_d_indices = sorted_indices[:, d-1].view(-1, 1)
+        current_top_masks.scatter_(1, rank_d_indices, 1.0)
+        
+        # Agreement_d = (交集數量 / d)
+        # 使用矩陣乘法一次算出所有對象的交集數
+        shared_count = torch.matmul(current_top_masks, current_top_masks.T)
+        agreement_d = shared_count / d
+        
+        # RBO 權重: (1-p) * p^(d-1)
+        weight = (1 - p) * (p ** (d - 1))
+        coverage += weight * agreement_d
+
+    # 4. 移除自相關並計算指標
+    coverage = coverage.masked_fill(diag_mask, 0.0)
+    
+    # 真實標籤
+    labels_col = labels.view(-1, 1)
+    gt_fn_mask = (labels_col.eq(labels_col.T) & ~diag_mask).float() 
+    gt_tn_mask = (~labels_col.eq(labels_col.T) & ~diag_mask).float() 
+
+    # Soft Metrics 計算
+    soft_tp = torch.sum(coverage * gt_fn_mask)
+    soft_fp = torch.sum(coverage * gt_tn_mask)
+    soft_fn = torch.sum((1 - coverage) * gt_fn_mask)
+
+    soft_precision = soft_tp / (soft_tp + soft_fp + 1e-8)
+    soft_recall = soft_tp / (soft_tp + soft_fn + 1e-8)
+    soft_f1 = (2 * soft_precision * soft_recall) / (soft_precision + soft_recall + 1e-8)
+    
+    stats = {
+        'soft_pFN_recall': soft_recall.item(),
+        'soft_pFN_precision': soft_precision.item(),
+        'soft_pFN_f1': soft_f1.item(),
+        'avg_coverage': coverage[gt_fn_mask.bool()].mean().item() if gt_fn_mask.any() else 0,
+    }
+    
+    return coverage, stats
+
+  def loss_cal_reweighted_FNs_by_RPO(self, x, x_aug, labels, cur_epoch=0, total_epochs=0, 
+                                       neg_include_self=True, reweight_strategy="1-coverage", 
+                                       coverage_threshold=0.5, renormalization=True):
+        T = 0.2
+        batch_size, _ = x.size()
+        sim_matrix = torch.exp(torch.mm(F.normalize(x, dim=1), F.normalize(x_aug, dim=1).T) / T)
+        
+        coverage, stats = self.identify_fn_by_rbo_coverage(sim_matrix, labels, p=0.9)
         
         if reweight_strategy == "1-coverage":
             negative_weights = 1.0 - coverage
@@ -1401,11 +1498,18 @@ if __name__ == '__main__':
                         'soft_pFN_precision': 0.0,
                         'soft_pFN_f1': 0.0,
                         'avg_coverage': 0.0,
-                        'Recall@1': 0.0,
-                        'Recall@5': 0.0,
-                        'Recall@10': 0.0,
-                        'mAP': 0.0
+                        # 'Recall@1': 0.0,
+                        # 'Recall@5': 0.0,
+                        # 'Recall@10': 0.0,
+                        # 'mAP': 0.0
                     }
+        if args.mode == 'reweight_FNs_by_RPO':
+            epoch_en_stats = {
+                'soft_pFN_recall': 0.0,
+                'soft_pFN_precision': 0.0,
+                'soft_pFN_f1': 0.0,
+                'avg_coverage': 0.0,
+            }
         if args.get_f1_scores_by_deg_boundary:
             all_x_embeddings = []
             all_x_aug_embeddings = []
@@ -1560,13 +1664,19 @@ if __name__ == '__main__':
                 epoch_en_stats['soft_pFN_precision'] += en_stats['soft_pFN_precision']
                 epoch_en_stats['soft_pFN_f1'] += en_stats['soft_pFN_f1']
                 epoch_en_stats['avg_coverage'] += en_stats['avg_coverage']
-                epoch_en_stats['Recall@1'] += en_stats.get('Recall@1', 0)
-                epoch_en_stats['Recall@5'] += en_stats.get('Recall@5', 0)
-                epoch_en_stats['Recall@10'] += en_stats.get('Recall@10', 0)
-                epoch_en_stats['mAP'] += en_stats.get('mAP', 0)
+                # epoch_en_stats['Recall@1'] += en_stats.get('Recall@1', 0)
+                # epoch_en_stats['Recall@5'] += en_stats.get('Recall@5', 0)
+                # epoch_en_stats['Recall@10'] += en_stats.get('Recall@10', 0)
+                # epoch_en_stats['mAP'] += en_stats.get('mAP', 0)
 
                 # 保留當前比例 (這通常隨 epoch 變動，batch 間相同)
-                current_en_threshold_val = en_stats['curr_en_threshold']
+                # current_en_threshold_val = en_stats['curr_en_threshold']
+            elif args.mode == 'reweight_FNs_by_RPO':
+                loss, coverage, en_stats = model.loss_cal_reweighted_FNs_by_RPO(x, x_aug, labels, neg_include_self=args.neg_include_self, reweight_strategy=args.reweight_strategy, coverage_threshold=args.coverage_threshold, renormalization=args.renormalization)
+                epoch_en_stats['soft_pFN_recall'] += en_stats['soft_pFN_recall']
+                epoch_en_stats['soft_pFN_precision'] += en_stats['soft_pFN_precision']
+                epoch_en_stats['soft_pFN_f1'] += en_stats['soft_pFN_f1']
+                epoch_en_stats['avg_coverage'] += en_stats['avg_coverage']
             else:
                 # Handles all other unmatched modes
                 raise RuntimeError(f"no mode matching {args.mode}, input should be: normal, TPs_TNs, etc.")
@@ -1602,7 +1712,7 @@ if __name__ == '__main__':
             # print(x_aug)
             oloss = odecay * l2_reg_ortho(model)
             loss_all += loss.item() * data.num_graphs
-            if not (args.mode == 'rm_FNs_by_ENs' or args.mode == 'reweight_FNs_by_ENs'):
+            if not (args.mode == 'rm_FNs_by_ENs' or args.mode == 'reweight_FNs_by_ENs' or args.mode == 'reweight_FNs_by_RPO'):
                 pos_sim_all += pos_sim.item()
                 neg_sim_all += neg_sim.item()
             if args.or_loss:
@@ -1624,7 +1734,7 @@ if __name__ == '__main__':
                 plot_theta_l2_distribution(x, x_aug, labels=data.y, args=args, epoch=epoch)
         # tensorboard
         writer.add_scalar('Loss/train', loss_all / len(dataloader.dataset), epoch)
-        if not (args.mode == 'rm_FNs_by_ENs' or args.mode == 'reweight_FNs_by_ENs'):
+        if not (args.mode == 'rm_FNs_by_ENs' or args.mode == 'reweight_FNs_by_ENs' or args.mode == 'reweight_FNs_by_RPO'):
             writer.add_scalar('Similarity/pos_sim', pos_sim_all / len(dataloader), epoch)
             writer.add_scalar('Similarity/neg_sim', neg_sim_all / len(dataloader), epoch)
         elif args.mode == 'rm_FNs_by_ENs':
@@ -1641,7 +1751,7 @@ if __name__ == '__main__':
             writer.add_scalar('EN_FN_Dynamics/Wrong_Rate_TN_Killed', avg_wrong_rate, epoch)
             writer.add_scalar('EN_FN_Dynamics/Removal_Precision', avg_precision, epoch)
             writer.add_scalar('EN_FN_Dynamics/Removal_F1_Score', avg_f1, epoch)
-            writer.add_scalar('EN_FN_Dynamics/Current_EN_THRESHOLD', current_en_threshold_val, epoch)
+            # writer.add_scalar('EN_FN_Dynamics/Current_EN_THRESHOLD', current_en_threshold_val, epoch)
             writer.add_scalar('FN_Stats/Avg_Deleted_FN_Count_Per_Batch', avg_deleted_count, epoch)
             writer.add_scalar('FN_Stats/Avg_Deleted_FN_Ratio_Per_Batch', avg_deleted_ratio, epoch)
             writer.add_scalars('EN_FN_Dynamics/Purity_Check', {
@@ -1655,20 +1765,32 @@ if __name__ == '__main__':
             avg_precision = epoch_en_stats['soft_pFN_precision'] / num_batches
             avg_f1 = epoch_en_stats['soft_pFN_f1'] / num_batches
             avg_coverage = epoch_en_stats['avg_coverage'] / num_batches
-            avg_recall_k = {
-                'R@1': epoch_en_stats['Recall@1'] / num_batches,
-                'R@5': epoch_en_stats['Recall@5'] / num_batches,
-                'R@10': epoch_en_stats['Recall@10'] / num_batches,
-            }
-            avg_map = epoch_en_stats['mAP'] / num_batches
+            # avg_recall_k = {
+            #     'R@1': epoch_en_stats['Recall@1'] / num_batches,
+            #     'R@5': epoch_en_stats['Recall@5'] / num_batches,
+            #     'R@10': epoch_en_stats['Recall@10'] / num_batches,
+            # }
+            # avg_map = epoch_en_stats['mAP'] / num_batches
 
             writer.add_scalar('EN_FN_Dynamics/Reweight_Recall', avg_recall, epoch)
             writer.add_scalar('EN_FN_Dynamics/Reweight_Precision', avg_precision, epoch)
             writer.add_scalar('EN_FN_Dynamics/Reweight_F1_Score', avg_f1, epoch)
-            writer.add_scalar('EN_FN_Dynamics/Current_EN_THRESHOLD', current_en_threshold_val, epoch)
+            # writer.add_scalar('EN_FN_Dynamics/Current_EN_THRESHOLD', current_en_threshold_val, epoch)
             writer.add_scalar('FN_Stats/Avg_Coverage', avg_coverage, epoch)
-            writer.add_scalars('Ranking_Performance/Recall_at_K', avg_recall_k, epoch)
-            writer.add_scalar('Ranking_Performance/mAP', avg_map, epoch)
+            # writer.add_scalars('Ranking_Performance/Recall_at_K', avg_recall_k, epoch)
+            # writer.add_scalar('Ranking_Performance/mAP', avg_map, epoch)
+        elif args.mode == 'reweight_FNs_by_RPO':
+            num_batches = len(dataloader)
+            
+            avg_recall = epoch_en_stats['soft_pFN_recall'] / num_batches
+            avg_precision = epoch_en_stats['soft_pFN_precision'] / num_batches
+            avg_f1 = epoch_en_stats['soft_pFN_f1'] / num_batches
+            avg_coverage = epoch_en_stats['avg_coverage'] / num_batches
+
+            writer.add_scalar('RPO_Dynamics/Reweight_Recall', avg_recall, epoch)
+            writer.add_scalar('RPO_Dynamics/Reweight_Precision', avg_precision, epoch)
+            writer.add_scalar('RPO_Dynamics/Reweight_F1_Score', avg_f1, epoch)
+            writer.add_scalar('RPO_Dynamics/Avg_Coverage', avg_coverage, epoch)
 
         print('Epoch {}, Loss {}'.format(epoch, loss_all / len(dataloader.dataset)))
         # print("pos sim = ", pos_sim_all, "; neg sim = ", neg_sim_all)

@@ -13,8 +13,8 @@ for DS in MUTAG DD REDDIT-BINARY IMDB-BINARY NCI1 PROTEINS COLLAB REDDIT-MULTI-5
 do
   for AUG in dnodes
   do
-    # for MODE in cheated normal reweighted rm_FN rm_FP reweighted_l2 rm_FNs_by_ENs reweight_FNs_by_ENs
-    for MODE in reweight_FNs_by_ENs
+    # for MODE in cheated normal reweighted rm_FN rm_FP reweighted_l2 rm_FNs_by_ENs reweight_FNs_by_ENs reweight_FNs_by_RPO
+    for MODE in reweight_FNs_by_RPO
     # for MODE in normal_rm_HNs normal_rm_ENs normal_HNs normal_ENs
     # for MODE in normal TP1_normal TP1_Nnormal TPs_TNs normal_TNs TPs_normal FP1_FNs normal_FNs FP1_normal FPs_FNs FPs_normal TP1_TN2
     do
@@ -31,9 +31,6 @@ do
         # # CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DS --lr 1e-4 --local --num-gc-layers 5 --aug $AUG --mode $MODE --log_interval 10 --epochs 200 --shuffle_DBN --plot_kde --plot_theta_l2
         # done
           CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DS --lr 1e-4 --local --num-gc-layers 5 --aug $AUG --mode $MODE --log_interval 1 --epochs 20 --plot_kde --plot_theta_l2 --neg_include_self --plot_anchor_aug_pair_theta_per_epoch --do_hn_analysis --reweight_strategy 1-coverage --renormalization
-          CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DS --lr 1e-4 --local --num-gc-layers 5 --aug $AUG --mode $MODE --log_interval 1 --epochs 20 --plot_kde --plot_theta_l2 --neg_include_self --plot_anchor_aug_pair_theta_per_epoch --do_hn_analysis --reweight_strategy 1-coverage --renormalization --base_en_threshold 0.5 --max_en_threshold 0.5
-          CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DS --lr 1e-4 --local --num-gc-layers 5 --aug $AUG --mode $MODE --log_interval 1 --epochs 20 --plot_kde --plot_theta_l2 --neg_include_self --plot_anchor_aug_pair_theta_per_epoch --do_hn_analysis --reweight_strategy 1-coverage --renormalization --base_en_threshold 0.5 --max_en_threshold 0.8
-          CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DS --lr 1e-4 --local --num-gc-layers 5 --aug $AUG --mode $MODE --log_interval 1 --epochs 20 --plot_kde --plot_theta_l2 --neg_include_self --plot_anchor_aug_pair_theta_per_epoch --do_hn_analysis --reweight_strategy 1-coverage --renormalization --base_en_threshold 0.6 --max_en_threshold 0.9
       # done
     done
   done
