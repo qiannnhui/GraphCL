@@ -26,6 +26,7 @@ def make_save_dir(base="./result", args=None, extra=None, add_timestamp=False):
         ("Renormalization", args.renormalization) if args.renormalization else None,
         ("RPO_anchor", args.RPO_anchor) if args.RPO_anchor else None,
         ("denominator_anchor", args.denominator_anchor) if args.denominator_anchor else None,
+        ("RPO_p", f"p={args.RPO_p}") if args.mode=="reweight_FNs_by_RPO" and hasattr(args, "RPO_p") else None,
     ]
     path_hierarchy = [item for item in path_hierarchy if item is not None]
 

@@ -792,7 +792,7 @@ class simclr(nn.Module):
     return coverage, stats
 
   def loss_cal_reweighted_FNs_by_RPO(self, x, x_aug, labels, cur_epoch=0, total_epochs=0, 
-                                       neg_include_self=True, reweight_strategy="1-coverage", 
+                                       neg_include_self=True, reweight_strategy="1-coverage", RPO_p=0.9,
                                        coverage_threshold=0.5, renormalization=True, RPO_anchor=False, denominator_anchor=False):
         T = 0.2
         batch_size, _ = x.size()
@@ -800,9 +800,9 @@ class simclr(nn.Module):
         sim_matrix_anchor = torch.exp(torch.mm(F.normalize(x, dim=1), F.normalize(x, dim=1).T) / T)
         
         if RPO_anchor:
-            coverage, stats = self.identify_fn_by_rbo_coverage(sim_matrix_anchor, labels, p=0.9)
+            coverage, stats = self.identify_fn_by_rbo_coverage(sim_matrix_anchor, labels, p=RPO_p)
         else:
-            coverage, stats = self.identify_fn_by_rbo_coverage(sim_matrix, labels, p=0.9)
+            coverage, stats = self.identify_fn_by_rbo_coverage(sim_matrix, labels, p=RPO_p)
         
         if reweight_strategy == "1-coverage":
             negative_weights = 1.0 - coverage
@@ -1679,7 +1679,7 @@ if __name__ == '__main__':
                 # 保留當前比例 (這通常隨 epoch 變動，batch 間相同)
                 # current_en_threshold_val = en_stats['curr_en_threshold']
             elif args.mode == 'reweight_FNs_by_RPO':
-                loss, coverage, en_stats = model.loss_cal_reweighted_FNs_by_RPO(x, x_aug, labels, neg_include_self=args.neg_include_self, reweight_strategy=args.reweight_strategy, coverage_threshold=args.coverage_threshold, renormalization=args.renormalization, RPO_anchor=args.RPO_anchor, denominator_anchor=args.denominator_anchor)
+                loss, coverage, en_stats = model.loss_cal_reweighted_FNs_by_RPO(x, x_aug, labels, neg_include_self=args.neg_include_self, reweight_strategy=args.reweight_strategy, coverage_threshold=args.coverage_threshold, renormalization=args.renormalization, RPO_anchor=args.RPO_anchor, denominator_anchor=args.denominator_anchor, RPO_p=args.RPO_p)
                 epoch_en_stats['soft_pFN_recall'] += en_stats['soft_pFN_recall']
                 epoch_en_stats['soft_pFN_precision'] += en_stats['soft_pFN_precision']
                 epoch_en_stats['soft_pFN_f1'] += en_stats['soft_pFN_f1']

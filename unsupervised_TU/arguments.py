@@ -55,6 +55,7 @@ def arg_parse():
     parser.add_argument('--renormalization', action='store_true', help='Apply renormalization to weights')
     parser.add_argument('--RPO_anchor', action='store_true', help='Use anchor instead of aug pair to select FN by RPO')
     parser.add_argument('--denominator_anchor', action='store_true', help='Use anchor instead of aug pair in denominator for loss calculation')
+    parser.add_argument('--RPO_p', type=float, default=0.9, help='Power for RPO calculation')
 
     return parser.parse_args()
 
