@@ -223,7 +223,7 @@ def draw_graph_with_highlight(data, graph_id, title, highlight_nodes=None, ax=No
     ax.set_yticks([])
     
     # 顯示圖例 (Type 0, Type 1, Type 2...)
-    ax.legend(scatterpoints=1, markerscale=1, loc='upper left', bbox_to_anchor=(1.0, 1.0))
+    ax.legend(scatteRBOints=1, markerscale=1, loc='upper left', bbox_to_anchor=(1.0, 1.0))
 
 
 def load_and_classify(args):

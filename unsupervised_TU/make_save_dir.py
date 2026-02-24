@@ -13,6 +13,7 @@ def make_save_dir(base="./result", args=None, extra=None, add_timestamp=False):
     # 主要屬性（可依需求調整順序）
     path_hierarchy = [
         ("mode", args.mode),
+        ("RBO_p", args.RBO_p) if args.mode=="reweight_FNs_by_RBO" and hasattr(args, "RBO_p") else None,
         ("DS", args.DS),
         ("neg_include_self", args.neg_include_self) if args.neg_include_self else None,
         ("aug", args.aug) if args.rotate == "none" else None,
@@ -24,9 +25,8 @@ def make_save_dir(base="./result", args=None, extra=None, add_timestamp=False):
         ("Reweight_Strategy", args.reweight_strategy) if args.mode=="reweight_FNs_by_ENs" and hasattr(args, "reweight_strategy") else None,
         ("Coverage_Threshold", args.coverage_threshold) if args.mode=="rm_FNs_by_ENs" or (args.mode == "reweight_FNs_by_ENs" and getattr(args, "reweight_strategy", "") == "thresholded") and hasattr(args, "coverage_threshold") else None,
         ("Renormalization", args.renormalization) if args.renormalization else None,
-        ("RPO_anchor", args.RPO_anchor) if args.RPO_anchor else None,
+        ("RBO_anchor", args.RBO_anchor) if args.RBO_anchor else None,
         ("denominator_anchor", args.denominator_anchor) if args.denominator_anchor else None,
-        ("RPO_p", f"p={args.RPO_p}") if args.mode=="reweight_FNs_by_RPO" and hasattr(args, "RPO_p") else None,
     ]
     path_hierarchy = [item for item in path_hierarchy if item is not None]
 

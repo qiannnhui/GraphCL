@@ -791,18 +791,18 @@ class simclr(nn.Module):
     
     return coverage, stats
 
-  def loss_cal_reweighted_FNs_by_RPO(self, x, x_aug, labels, cur_epoch=0, total_epochs=0, 
-                                       neg_include_self=True, reweight_strategy="1-coverage", RPO_p=0.9,
-                                       coverage_threshold=0.5, renormalization=True, RPO_anchor=False, denominator_anchor=False):
+  def loss_cal_reweighted_FNs_by_RBO(self, x, x_aug, labels, cur_epoch=0, total_epochs=0, 
+                                       neg_include_self=True, reweight_strategy="1-coverage", RBO_p=0.9,
+                                       coverage_threshold=0.5, renormalization=True, RBO_anchor=False, denominator_anchor=False):
         T = 0.2
         batch_size, _ = x.size()
         sim_matrix = torch.exp(torch.mm(F.normalize(x, dim=1), F.normalize(x_aug, dim=1).T) / T)
         sim_matrix_anchor = torch.exp(torch.mm(F.normalize(x, dim=1), F.normalize(x, dim=1).T) / T)
         
-        if RPO_anchor:
-            coverage, stats = self.identify_fn_by_rbo_coverage(sim_matrix_anchor, labels, p=RPO_p)
+        if RBO_anchor:
+            coverage, stats = self.identify_fn_by_rbo_coverage(sim_matrix_anchor, labels, p=RBO_p)
         else:
-            coverage, stats = self.identify_fn_by_rbo_coverage(sim_matrix, labels, p=RPO_p)
+            coverage, stats = self.identify_fn_by_rbo_coverage(sim_matrix, labels, p=RBO_p)
         
         if reweight_strategy == "1-coverage":
             negative_weights = 1.0 - coverage
@@ -1507,7 +1507,7 @@ if __name__ == '__main__':
                         # 'Recall@10': 0.0,
                         # 'mAP': 0.0
                     }
-        if args.mode == 'reweight_FNs_by_RPO':
+        if args.mode == 'reweight_FNs_by_RBO':
             epoch_en_stats = {
                 'soft_pFN_recall': 0.0,
                 'soft_pFN_precision': 0.0,
@@ -1678,8 +1678,8 @@ if __name__ == '__main__':
 
                 # 保留當前比例 (這通常隨 epoch 變動，batch 間相同)
                 # current_en_threshold_val = en_stats['curr_en_threshold']
-            elif args.mode == 'reweight_FNs_by_RPO':
-                loss, coverage, en_stats = model.loss_cal_reweighted_FNs_by_RPO(x, x_aug, labels, neg_include_self=args.neg_include_self, reweight_strategy=args.reweight_strategy, coverage_threshold=args.coverage_threshold, renormalization=args.renormalization, RPO_anchor=args.RPO_anchor, denominator_anchor=args.denominator_anchor, RPO_p=args.RPO_p)
+            elif args.mode == 'reweight_FNs_by_RBO':
+                loss, coverage, en_stats = model.loss_cal_reweighted_FNs_by_RBO(x, x_aug, labels, neg_include_self=args.neg_include_self, reweight_strategy=args.reweight_strategy, coverage_threshold=args.coverage_threshold, renormalization=args.renormalization, RBO_anchor=args.RBO_anchor, denominator_anchor=args.denominator_anchor, RBO_p=args.RBO_p)
                 epoch_en_stats['soft_pFN_recall'] += en_stats['soft_pFN_recall']
                 epoch_en_stats['soft_pFN_precision'] += en_stats['soft_pFN_precision']
                 epoch_en_stats['soft_pFN_f1'] += en_stats['soft_pFN_f1']
@@ -1719,7 +1719,7 @@ if __name__ == '__main__':
             # print(x_aug)
             oloss = odecay * l2_reg_ortho(model)
             loss_all += loss.item() * data.num_graphs
-            if not (args.mode == 'rm_FNs_by_ENs' or args.mode == 'reweight_FNs_by_ENs' or args.mode == 'reweight_FNs_by_RPO'):
+            if not (args.mode == 'rm_FNs_by_ENs' or args.mode == 'reweight_FNs_by_ENs' or args.mode == 'reweight_FNs_by_RBO'):
                 pos_sim_all += pos_sim.item()
                 neg_sim_all += neg_sim.item()
             if args.or_loss:
@@ -1741,7 +1741,7 @@ if __name__ == '__main__':
                 plot_theta_l2_distribution(x, x_aug, labels=data.y, args=args, epoch=epoch)
         # tensorboard
         writer.add_scalar('Loss/train', loss_all / len(dataloader.dataset), epoch)
-        if not (args.mode == 'rm_FNs_by_ENs' or args.mode == 'reweight_FNs_by_ENs' or args.mode == 'reweight_FNs_by_RPO'):
+        if not (args.mode == 'rm_FNs_by_ENs' or args.mode == 'reweight_FNs_by_ENs' or args.mode == 'reweight_FNs_by_RBO'):
             writer.add_scalar('Similarity/pos_sim', pos_sim_all / len(dataloader), epoch)
             writer.add_scalar('Similarity/neg_sim', neg_sim_all / len(dataloader), epoch)
         elif args.mode == 'rm_FNs_by_ENs':
@@ -1786,7 +1786,7 @@ if __name__ == '__main__':
             writer.add_scalar('FN_Stats/Avg_Coverage', avg_coverage, epoch)
             # writer.add_scalars('Ranking_Performance/Recall_at_K', avg_recall_k, epoch)
             # writer.add_scalar('Ranking_Performance/mAP', avg_map, epoch)
-        elif args.mode == 'reweight_FNs_by_RPO':
+        elif args.mode == 'reweight_FNs_by_RBO':
             num_batches = len(dataloader)
             
             avg_recall = epoch_en_stats['soft_pFN_recall'] / num_batches
@@ -1794,10 +1794,10 @@ if __name__ == '__main__':
             avg_f1 = epoch_en_stats['soft_pFN_f1'] / num_batches
             avg_coverage = epoch_en_stats['avg_coverage'] / num_batches
 
-            writer.add_scalar('RPO_Dynamics/Reweight_Recall', avg_recall, epoch)
-            writer.add_scalar('RPO_Dynamics/Reweight_Precision', avg_precision, epoch)
-            writer.add_scalar('RPO_Dynamics/Reweight_F1_Score', avg_f1, epoch)
-            writer.add_scalar('RPO_Dynamics/Avg_Coverage', avg_coverage, epoch)
+            writer.add_scalar('RBO_Dynamics/Reweight_Recall', avg_recall, epoch)
+            writer.add_scalar('RBO_Dynamics/Reweight_Precision', avg_precision, epoch)
+            writer.add_scalar('RBO_Dynamics/Reweight_F1_Score', avg_f1, epoch)
+            writer.add_scalar('RBO_Dynamics/Avg_Coverage', avg_coverage, epoch)
 
         print('Epoch {}, Loss {}'.format(epoch, loss_all / len(dataloader.dataset)))
         # print("pos sim = ", pos_sim_all, "; neg sim = ", neg_sim_all)
