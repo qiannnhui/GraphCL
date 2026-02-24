@@ -40,6 +40,7 @@ from plot_tsne import visualize_embeddings
 from plot_KDE import plot_kde_unitcircle_kde
 from plot_theta_epoch import plot_theta_per_epoch
 from plot_sim_epoch import plot_sim_per_epoch
+from plot_RBO_heatmap import plot_sorted_rbo_heatmap
 from make_save_dir import make_save_dir # 引入創建儲存目錄的函數
 from save_load_ckpts import load_checkpoint, save_checkpoint # 引入檢查點函數
 from utils import create_pos_and_neg_mask, calculate_f1_scores_by_deg_boundary
@@ -722,7 +723,7 @@ class simclr(nn.Module):
             current_sum = negative_weights.sum(dim=1, keepdim=True) # (B, 1)
             scale_factor = target_sum / (current_sum + 1e-8)
             normalized_weights = negative_weights * scale_factor
-        
+
         self_pos = sim_matrix.diag()
         weighted_neg_sim = (sim_matrix * normalized_weights).sum(dim=1)
         loss = -torch.log(self_pos / (weighted_neg_sim + 1e-8) + 1e-8).mean()
@@ -793,7 +794,8 @@ class simclr(nn.Module):
 
   def loss_cal_reweighted_FNs_by_RBO(self, x, x_aug, labels, cur_epoch=0, total_epochs=0, 
                                        neg_include_self=True, reweight_strategy="1-coverage", RBO_p=0.9,
-                                       coverage_threshold=0.5, renormalization=True, RBO_anchor=False, denominator_anchor=False):
+                                       coverage_threshold=0.5, renormalization=True, RBO_anchor=False, 
+                                       denominator_anchor=False, RBO_save_path="./"):
         T = 0.2
         batch_size, _ = x.size()
         sim_matrix = torch.exp(torch.mm(F.normalize(x, dim=1), F.normalize(x_aug, dim=1).T) / T)
@@ -824,6 +826,9 @@ class simclr(nn.Module):
             current_sum = negative_weights.sum(dim=1, keepdim=True) # (B, 1)
             scale_factor = target_sum / (current_sum + 1e-8)
             normalized_weights = negative_weights * scale_factor
+            plot_sorted_rbo_heatmap(normalized_weights.cpu().numpy(), labels.cpu().numpy(), cur_epoch, f"{RBO_save_path}/rbo_heatmap_renorm.png")
+
+        plot_sorted_rbo_heatmap(negative_weights.cpu().numpy(), labels.cpu().numpy(), cur_epoch, f"{RBO_save_path}/rbo_heatmap_ori.png")
         
         self_pos = sim_matrix.diag()
         weighted_neg_sim = (sim_matrix * normalized_weights).sum(dim=1) if not denominator_anchor else (sim_matrix_anchor * normalized_weights).sum(dim=1)
@@ -1679,7 +1684,13 @@ if __name__ == '__main__':
                 # 保留當前比例 (這通常隨 epoch 變動，batch 間相同)
                 # current_en_threshold_val = en_stats['curr_en_threshold']
             elif args.mode == 'reweight_FNs_by_RBO':
-                loss, coverage, en_stats = model.loss_cal_reweighted_FNs_by_RBO(x, x_aug, labels, neg_include_self=args.neg_include_self, reweight_strategy=args.reweight_strategy, coverage_threshold=args.coverage_threshold, renormalization=args.renormalization, RBO_anchor=args.RBO_anchor, denominator_anchor=args.denominator_anchor, RBO_p=args.RBO_p)
+                rbo_save_dir = f'{save_dir}/plot_RBO_weight/RBO_epoch_{epoch}'
+                os.makedirs(rbo_save_dir, exist_ok=True)
+                loss, coverage, en_stats = model.loss_cal_reweighted_FNs_by_RBO(x, x_aug, labels, neg_include_self=args.neg_include_self, 
+                                                                                reweight_strategy=args.reweight_strategy, coverage_threshold=args.coverage_threshold, 
+                                                                                renormalization=args.renormalization, RBO_anchor=args.RBO_anchor,
+                                                                                denominator_anchor=args.denominator_anchor, RBO_p=args.RBO_p,
+                                                                                RBO_save_path=rbo_save_dir)
                 epoch_en_stats['soft_pFN_recall'] += en_stats['soft_pFN_recall']
                 epoch_en_stats['soft_pFN_precision'] += en_stats['soft_pFN_precision']
                 epoch_en_stats['soft_pFN_f1'] += en_stats['soft_pFN_f1']
