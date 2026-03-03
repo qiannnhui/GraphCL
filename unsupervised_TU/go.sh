@@ -14,15 +14,16 @@ do
   for AUG in dnodes
   do
     # for MODE in cheated normal reweighted rm_FN rm_FP reweighted_l2 rm_FNs_by_ENs reweight_FNs_by_ENs reweight_FNs_by_RBO
+    # CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DS --lr 1e-4 --local --num-gc-layers 5 --aug $AUG --mode reweight_FNs_by_ENs --log_interval 1 --epochs 20 --plot_kde --plot_theta_l2 --plot_anchor_aug_pair_theta_per_epoch --do_hn_analysis --reweight_strategy 1-coverage --renormalization
     for MODE in reweight_FNs_by_RBO
     # for MODE in normal_rm_HNs normal_rm_ENs normal_HNs normal_ENs
     # for MODE in normal TP1_normal TP1_Nnormal TPs_TNs normal_TNs TPs_normal FP1_FNs normal_FNs FP1_normal FPs_FNs FPs_normal TP1_TN2
     do
-      for RBO_p in 0.980 0.981 0.982 0.983
+      for RBO_p in 0.8
       do
           # CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DS --lr 1e-4 --local --num-gc-layers 5 --aug $AUG --mode $MODE --log_interval 1 --epochs 20 --plot_kde --plot_theta_l2 --neg_include_self --plot_anchor_aug_pair_theta_per_epoch --do_hn_analysis --reweight_strategy 1-coverage --renormalization --RBO_p $RBO_p
-          CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DS --lr 1e-4 --local --num-gc-layers 5 --aug $AUG --mode $MODE --log_interval 1 --epochs 20 --plot_kde --plot_theta_l2 --neg_include_self --plot_anchor_aug_pair_theta_per_epoch --do_hn_analysis --reweight_strategy 1-coverage --renormalization --RBO_anchor --RBO_p $RBO_p
-          # CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DS --lr 1e-4 --local --num-gc-layers 5 --aug $AUG --mode $MODE --log_interval 1 --epochs 20 --plot_kde --plot_theta_l2 --plot_anchor_aug_pair_theta_per_epoch --do_hn_analysis --reweight_strategy 1-coverage --renormalization --RBO_anchor --RBO_p $RBO_p
+          # CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DS --lr 1e-4 --local --num-gc-layers 5 --aug $AUG --mode $MODE --log_interval 1 --epochs 20 --plot_kde --plot_theta_l2 --neg_include_self --plot_anchor_aug_pair_theta_per_epoch --do_hn_analysis --reweight_strategy 1-coverage --renormalization --RBO_anchor --RBO_p $RBO_p
+          CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DS --lr 1e-4 --local --num-gc-layers 5 --aug $AUG --mode $MODE --log_interval 1 --epochs 20 --plot_kde --plot_theta_l2 --plot_anchor_aug_pair_theta_per_epoch --do_hn_analysis --reweight_strategy 1-coverage --renormalization --RBO_anchor --RBO_p $RBO_p
           # CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DS --lr 1e-4 --local --num-gc-layers 5 --aug $AUG --mode $MODE --log_interval 1 --epochs 20 --plot_kde --plot_theta_l2 --neg_include_self --plot_anchor_aug_pair_theta_per_epoch --do_hn_analysis --reweight_strategy 1-coverage --renormalization --denominator_anchor --RBO_p $RBO_p
           # CUDA_VISIBLE_DEVICES=$1 python gsimclr.py --DS $DS --lr 1e-4 --local --num-gc-layers 5 --aug $AUG --mode $MODE --log_interval 1 --epochs 20 --plot_kde --plot_theta_l2 --neg_include_self --plot_anchor_aug_pair_theta_per_epoch --do_hn_analysis --reweight_strategy 1-coverage --renormalization --RBO_anchor --denominator_anchor --RBO_p $RBO_p
       done
