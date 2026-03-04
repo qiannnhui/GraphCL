@@ -56,6 +56,7 @@ def arg_parse():
     parser.add_argument('--RBO_anchor', action='store_true', help='Use anchor instead of aug pair to select FN by RBO')
     parser.add_argument('--denominator_anchor', action='store_true', help='Use anchor instead of aug pair in denominator for loss calculation')
     parser.add_argument('--RBO_p', type=float, default=0.9, help='Power for RBO calculation')
+    parser.add_argument('--tn_weight', type=float, default=1.0, help='Weight for true negatives in the loss function')
 
     return parser.parse_args()
 

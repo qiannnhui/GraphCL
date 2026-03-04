@@ -156,10 +156,11 @@ def get_pair_angles(
 def unified_loss(x: torch.Tensor, x_aug: torch.Tensor, labels: torch.Tensor, T: float = 0.2,
                      sim_measure: str = "cosine",
                      pos_strategy: Literal['normal', 'sum_tp', 'sum_fp', 'sum_all_pos', 'sum_sample_tp', 'sum_sample_fp'] = 'normal', 
-                     neg_strategy: Literal['normal', 'sum_tn', 'sum_fn', 'sum_sample_tn', 'sum_sample_fn', 'normalized_normal', 'denominator_anchor'] = 'normal',
+                     neg_strategy: Literal['normal', 'sum_tn', 'sum_fn', 'sum_sample_tn', 'sum_sample_fn', 'normalized_normal', 'denominator_anchor', 'tn_add_weight'] = 'normal',
                      pos_num_samples: int = 10,
                      neg_num_samples: int = 10,
-                     neg_include_self: bool = False):
+                     neg_include_self: bool = False,
+                     tn_weight: float = 1.0):
     
     device = x.device
     sim_matrix = get_similarity_matrix(x=x, x_aug=x_aug, similarity_measure=sim_measure, T=T)
@@ -228,6 +229,11 @@ def unified_loss(x: torch.Tensor, x_aug: torch.Tensor, labels: torch.Tensor, T: 
         N_sum_unnormalized = sim_matrix.sum(dim=1) - sim_matrix.diag()
         batch_size = labels.size(0)
         N_sum = N_sum_unnormalized / batch_size
+
+    elif neg_strategy == 'tn_add_weight':
+        tn_term = (sim_matrix * TN_mask).sum(dim=1)
+        fn_term = (sim_matrix * TP_mask).sum(dim=1)
+        N_sum = (tn_weight * tn_term) + fn_term
 
     # # Normalized Sum of Labeled/Sampled Pairs (將所有註解掉的邏輯也轉換為 elif)
     # elif neg_strategy == 'normalized_sum_tn':

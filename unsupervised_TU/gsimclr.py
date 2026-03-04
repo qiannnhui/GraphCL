@@ -794,6 +794,8 @@ class simclr(nn.Module):
 
     # 4. 移除自相關並計算指標
     coverage = coverage.masked_fill(diag_mask, 0.0)
+    # symmetricize coverage
+    # coverage = torch.sqrt(coverage * coverage.T)
     
     # 真實標籤
     labels_col = labels.view(-1, 1)
@@ -1676,6 +1678,9 @@ if __name__ == '__main__':
             elif args.mode == 'TP1_TN2':
                 # P = Sum(1 random TP), N = Sum(2 random TNs)
                 loss, pos_sim, neg_sim = unified_loss(x, x_aug, labels, pos_strategy='sum_sample_tp', pos_num_samples=1, neg_strategy='sum_sample_tn', neg_num_samples=2, sim_measure=args.similarity_measure)
+            elif args.mode == "normal_TN_add_weight":
+                # P = S(x_i, x_i+), N = Sum(all neg) with additional weight on all TNs
+                loss, pos_sim, neg_sim = unified_loss(x, x_aug, labels, pos_strategy='normal', neg_strategy='tn_add_weight', sim_measure=args.similarity_measure, tn_weight=args.tn_weight)
             elif args.mode == 'TPs_HNs': # cheated rm Easy Negatives
                 # P = Sum(TPs), N = Sum(Hard Negatives)
                 loss, pos_sim, neg_sim = flexible_hard_mining_loss(x, x_aug, labels, args.hard_sim_threshold, num_sets='ALL_POS', den_sets='HN', sim_measure=args.similarity_measure)

@@ -14,6 +14,7 @@ def make_save_dir(base="./result", args=None, extra=None, add_timestamp=False):
     path_hierarchy = [
         ("mode", args.mode),
         ("RBO_p", args.RBO_p) if args.mode=="reweight_FNs_by_RBO" and hasattr(args, "RBO_p") else None,
+        ("tn_weight", args.tn_weight) if args.mode=="normal_TN_add_weight" and hasattr(args, "tn_weight") else None,
         ("DS", args.DS),
         ("neg_include_self", args.neg_include_self) if args.neg_include_self else None,
         ("aug", args.aug) if args.rotate == "none" else None,
