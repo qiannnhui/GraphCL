@@ -735,26 +735,32 @@ class simclr(nn.Module):
 
         return loss, coverage, stats
 
-  def validate_rbo_ranking(self, coverage, gt_fn_mask, k_list=[1, 5, 10, 50]):
+  def validate_rbo_ranking(self, coverage, gt_fn_mask, gt_tn_mask, k_list=[1, 5, 10]):
     """
-    驗證 RBO 排序的前幾名到底是不是真的 FN
+    同時驗證 FN (高分) 與 TN (低分) 的可靠性
     """
     batch_size = coverage.size(0)
-    _, sorted_indices = torch.sort(coverage, dim=1, descending=True)
-    
+    device = coverage.device
     ranking_stats = {}
+
+    _, fn_sorted_indices = torch.sort(coverage, dim=1, descending=True)
+    tmp_coverage = coverage.clone()
+    diag_mask = torch.eye(batch_size, dtype=torch.bool, device=device)
+    tmp_coverage.masked_fill_(diag_mask, 999.0) 
+    _, tn_sorted_indices = torch.sort(tmp_coverage, dim=1, descending=False)
+
     for k in k_list:
-        topk_indices = sorted_indices[:, :k]
-        topk_mask = torch.zeros_like(coverage).scatter_(1, topk_indices, 1.0)
-        hits = (topk_mask * gt_fn_mask).sum()
-        
-        precision_at_k = hits / (batch_size * k)
-        
-        total_fns = gt_fn_mask.sum()
-        recall_at_k = hits / (total_fns + 1e-8)
-        
-        ranking_stats[f'RBO_Precision@{k}'] = precision_at_k.item()
-        ranking_stats[f'RBO_Recall@{k}'] = recall_at_k.item()
+        # FN Precision@K
+        topk_fn = fn_sorted_indices[:, :k]
+        fn_hits = torch.gather(gt_fn_mask, 1, topk_fn).sum()
+        ranking_stats[f'RBO_FN_Precision@{k}'] = (fn_hits / (batch_size * k)).item()
+        ranking_stats[f'RBO_FN_Recall@{k}'] = (fn_hits / gt_fn_mask.sum()).item() if gt_fn_mask.sum() > 0 else 0
+
+        # TN Precision@K
+        topk_tn = tn_sorted_indices[:, :k]
+        tn_hits = torch.gather(gt_tn_mask, 1, topk_tn).sum()
+        ranking_stats[f'RBO_TN_Precision@{k}'] = (tn_hits / (batch_size * k)).item()
+        ranking_stats[f'RBO_TN_Recall@{k}'] = (tn_hits / gt_tn_mask.sum()).item() if gt_tn_mask.sum() > 0 else 0
         
     return ranking_stats
 
@@ -817,7 +823,7 @@ class simclr(nn.Module):
         'soft_pFN_f1': soft_f1.item(),
         'avg_coverage': coverage[gt_fn_mask.bool()].mean().item() if gt_fn_mask.any() else 0,
     }
-    ranking_stats = self.validate_rbo_ranking(coverage, gt_fn_mask, k_list=[1, 5, 10, 50])
+    ranking_stats = self.validate_rbo_ranking(coverage, gt_fn_mask, gt_tn_mask, k_list=[1, 5, 10, 50])
     stats.update(ranking_stats)
     
     return coverage, stats
@@ -825,7 +831,7 @@ class simclr(nn.Module):
   def loss_cal_reweighted_FNs_by_RBO(self, x, x_aug, labels, cur_epoch=0, total_epochs=0, 
                                        neg_include_self=True, reweight_strategy="1-coverage", RBO_p=0.9,
                                        coverage_threshold=0.5, renormalization=True, RBO_anchor=False, 
-                                       denominator_anchor=False, RBO_save_path="./"):
+                                       denominator_anchor=False, RBO_save_path="./", boost_factor=2.0):
         T = 0.2
         batch_size, _ = x.size()
         sim_matrix = torch.exp(torch.mm(F.normalize(x, dim=1), F.normalize(x_aug, dim=1).T) / T)
@@ -838,6 +844,11 @@ class simclr(nn.Module):
         
         if reweight_strategy == "1-coverage":
             negative_weights = 1.0 - coverage
+        elif reweight_strategy == "boost_TNs":
+            # 邏輯：當 coverage 趨近於 0 (極可能是 TN)，權重趨近於 boost_factor
+            # 當 coverage 趨近於 1 (可能是 FN)，權重趨近於 1.0 (不額外推)
+            # 你也可以用 linear 映射: negative_weights = 1.0 + (boost_factor - 1.0) * (1.0 - coverage)
+            negative_weights = 1.0 + (boost_factor - 1.0) * torch.exp(-coverage * 5) # 使用指數衰減，只 boost 那些真的無關的
         elif reweight_strategy == "thresholded":
             negative_weights = torch.where(coverage > coverage_threshold, 1.0 - coverage, torch.ones_like(coverage))
         else:
@@ -846,26 +857,24 @@ class simclr(nn.Module):
         diag_mask = torch.eye(batch_size, dtype=torch.bool, device=x.device)
         if not neg_include_self:
             negative_weights = negative_weights.masked_fill(diag_mask, 0.0)
-            target_sum = float(batch_size - 1) # 每個 anchor 應該對應的總推力
+            target_sum = float(batch_size - 1)
         else:
             negative_weights = negative_weights.masked_fill(diag_mask, 1.0)
             target_sum = float(batch_size)
 
-        # Renormalize weights to maintain the same total contribution as normal InfoNCE
         if renormalization:
-            current_sum = negative_weights.sum(dim=1, keepdim=True) # (B, 1)
+            current_sum = negative_weights.sum(dim=1, keepdim=True)
             scale_factor = target_sum / (current_sum + 1e-8)
             normalized_weights = negative_weights * scale_factor
-            plot_sorted_rbo_heatmap(normalized_weights.cpu().numpy(), labels.cpu().numpy(), cur_epoch, f"{RBO_save_path}/rbo_heatmap_renorm.png")
+        else:
+            normalized_weights = negative_weights
+            scale_factor = torch.ones(batch_size, 1, device=x.device)
 
-        plot_sorted_rbo_heatmap(negative_weights.cpu().numpy(), labels.cpu().numpy(), cur_epoch, f"{RBO_save_path}/rbo_heatmap_ori.png")
-        
         self_pos = sim_matrix.diag()
         weighted_neg_sim = (sim_matrix * normalized_weights).sum(dim=1) if not denominator_anchor else (sim_matrix_anchor * normalized_weights).sum(dim=1)
         loss = -torch.log(self_pos / (weighted_neg_sim + 1e-8) + 1e-8).mean()
 
         stats['avg_scale_factor'] = scale_factor.mean().item()
-
         return loss, coverage, stats
 
   def loss_cal(self, x, x_aug, labels, get_cm=False, epoch=None):
@@ -1556,14 +1565,22 @@ if __name__ == '__main__':
                 'soft_pFN_precision': 0.0,
                 'soft_pFN_f1': 0.0,
                 'avg_coverage': 0.0,
-                'RBO_Precision@1': 0.0,
-                'RBO_Precision@10': 0.0,
-                'RBO_Precision@5': 0.0,
-                'RBO_Precision@50': 0.0,
-                'RBO_Recall@1': 0.0,
-                'RBO_Recall@10': 0.0,
-                'RBO_Recall@5': 0.0,
-                'RBO_Recall@50': 0.0,
+                'RBO_FN_Precision@1': 0.0,
+                'RBO_FN_Precision@10': 0.0,
+                'RBO_FN_Precision@5': 0.0,
+                'RBO_FN_Precision@50': 0.0,
+                'RBO_TN_Precision@1': 0.0,
+                'RBO_TN_Precision@10': 0.0,
+                'RBO_TN_Precision@5': 0.0,
+                'RBO_TN_Precision@50': 0.0,
+                'RBO_FN_Recall@1': 0.0,
+                'RBO_FN_Recall@10': 0.0,
+                'RBO_FN_Recall@5': 0.0,
+                'RBO_FN_Recall@50': 0.0,
+                'RBO_TN_Recall@1': 0.0,
+                'RBO_TN_Recall@10': 0.0,
+                'RBO_TN_Recall@5': 0.0,
+                'RBO_TN_Recall@50': 0.0,
             }
         if args.get_f1_scores_by_deg_boundary:
             all_x_embeddings = []
@@ -1726,8 +1743,8 @@ if __name__ == '__main__':
                 epoch_en_stats['soft_pFN_f1'] += en_stats['soft_pFN_f1']
                 epoch_en_stats['avg_coverage'] += en_stats['avg_coverage']
                 for k in [1, 5, 10, 50]: # 根據你在 validate_rbo_ranking 設的 k
-                    epoch_en_stats[f'Precision@{k}'] += en_stats.get(f'RBO_Precision@{k}', 0)
-                    epoch_en_stats[f'Recall@{k}'] += en_stats.get(f'RBO_Recall@{k}', 0)
+                    epoch_en_stats[f'Precision@{k}'] += en_stats.get(f'RBO_FN_Precision@{k}', 0)
+                    epoch_en_stats[f'Recall@{k}'] += en_stats.get(f'RBO_FN_Recall@{k}', 0)
 
                 # epoch_en_stats['Recall@1'] += en_stats.get('Recall@1', 0)
                 # epoch_en_stats['Recall@5'] += en_stats.get('Recall@5', 0)
@@ -1749,8 +1766,10 @@ if __name__ == '__main__':
                 epoch_en_stats['soft_pFN_f1'] += en_stats['soft_pFN_f1']
                 epoch_en_stats['avg_coverage'] += en_stats['avg_coverage']
                 for k in [1, 5, 10, 50]: # 根據你在 validate_rbo_ranking 設的 k
-                    epoch_en_stats[f'RBO_Precision@{k}'] += en_stats.get(f'RBO_Precision@{k}', 0)
-                    epoch_en_stats[f'RBO_Recall@{k}'] += en_stats.get(f'RBO_Recall@{k}', 0)
+                    epoch_en_stats[f'RBO_FN_Precision@{k}'] += en_stats.get(f'RBO_FN_Precision@{k}', 0)
+                    epoch_en_stats[f'RBO_FN_Recall@{k}'] += en_stats.get(f'RBO_FN_Recall@{k}', 0)
+                    epoch_en_stats[f'RBO_TN_Precision@{k}'] += en_stats.get(f'RBO_TN_Precision@{k}', 0)
+                    epoch_en_stats[f'RBO_TN_Recall@{k}'] += en_stats.get(f'RBO_TN_Recall@{k}', 0)
             else:
                 # Handles all other unmatched modes
                 raise RuntimeError(f"no mode matching {args.mode}, input should be: normal, TPs_TNs, etc.")
@@ -1874,14 +1893,22 @@ if __name__ == '__main__':
             writer.add_scalar('RBO_Dynamics/Reweight_F1_Score', avg_f1, epoch)
             writer.add_scalar('RBO_Dynamics/Avg_Coverage', avg_coverage, epoch)
 
-            writer.add_scalar('RBO_Ranking/Precision@1', epoch_en_stats['RBO_Precision@1'] / num_batches, epoch)
-            writer.add_scalar('RBO_Ranking/Precision@10', epoch_en_stats['RBO_Precision@10'] / num_batches, epoch)
-            writer.add_scalar('RBO_Ranking/Precision@5', epoch_en_stats['RBO_Precision@5'] / num_batches, epoch)
-            writer.add_scalar('RBO_Ranking/Precision@50', epoch_en_stats['RBO_Precision@50'] / num_batches, epoch)
-            writer.add_scalar('RBO_Ranking/Recall@1', epoch_en_stats['RBO_Recall@1'] / num_batches, epoch)
-            writer.add_scalar('RBO_Ranking/Recall@10', epoch_en_stats['RBO_Recall@10'] / num_batches, epoch)
-            writer.add_scalar('RBO_Ranking/Recall@5', epoch_en_stats['RBO_Recall@5'] / num_batches, epoch)
-            writer.add_scalar('RBO_Ranking/Recall@50', epoch_en_stats['RBO_Recall@50'] / num_batches, epoch)
+            writer.add_scalar('RBO_Ranking/FN_Precision@1', epoch_en_stats['RBO_FN_Precision@1'] / num_batches, epoch)
+            writer.add_scalar('RBO_Ranking/FN_Precision@10', epoch_en_stats['RBO_FN_Precision@10'] / num_batches, epoch)
+            writer.add_scalar('RBO_Ranking/FN_Precision@5', epoch_en_stats['RBO_FN_Precision@5'] / num_batches, epoch)
+            writer.add_scalar('RBO_Ranking/FN_Precision@50', epoch_en_stats['RBO_FN_Precision@50'] / num_batches, epoch)
+            writer.add_scalar('RBO_Ranking/FN_Recall@1', epoch_en_stats['RBO_FN_Recall@1'] / num_batches, epoch)
+            writer.add_scalar('RBO_Ranking/FN_Recall@10', epoch_en_stats['RBO_FN_Recall@10'] / num_batches, epoch)
+            writer.add_scalar('RBO_Ranking/FN_Recall@5', epoch_en_stats['RBO_FN_Recall@5'] / num_batches, epoch)
+            writer.add_scalar('RBO_Ranking/FN_Recall@50', epoch_en_stats['RBO_FN_Recall@50'] / num_batches, epoch)
+            writer.add_scalar('RBO_Ranking/TN_Precision@1', epoch_en_stats['RBO_TN_Precision@1'] / num_batches, epoch)
+            writer.add_scalar('RBO_Ranking/TN_Precision@10', epoch_en_stats['RBO_TN_Precision@10'] / num_batches, epoch)
+            writer.add_scalar('RBO_Ranking/TN_Precision@5', epoch_en_stats['RBO_TN_Precision@5'] / num_batches, epoch)
+            writer.add_scalar('RBO_Ranking/TN_Precision@50', epoch_en_stats['RBO_TN_Precision@50'] / num_batches, epoch)
+            writer.add_scalar('RBO_Ranking/TN_Recall@1', epoch_en_stats['RBO_TN_Recall@1'] / num_batches, epoch)
+            writer.add_scalar('RBO_Ranking/TN_Recall@10', epoch_en_stats['RBO_TN_Recall@10'] / num_batches, epoch)
+            writer.add_scalar('RBO_Ranking/TN_Recall@5', epoch_en_stats['RBO_TN_Recall@5'] / num_batches, epoch)
+            writer.add_scalar('RBO_Ranking/TN_Recall@50', epoch_en_stats['RBO_TN_Recall@50'] / num_batches, epoch)
 
         print('Epoch {}, Loss {}'.format(epoch, loss_all / len(dataloader.dataset)))
         # print("pos sim = ", pos_sim_all, "; neg sim = ", neg_sim_all)
