@@ -845,10 +845,12 @@ class simclr(nn.Module):
         if reweight_strategy == "1-coverage":
             negative_weights = 1.0 - coverage
         elif reweight_strategy == "boost_TNs":
-            # 邏輯：當 coverage 趨近於 0 (極可能是 TN)，權重趨近於 boost_factor
-            # 當 coverage 趨近於 1 (可能是 FN)，權重趨近於 1.0 (不額外推)
-            # 你也可以用 linear 映射: negative_weights = 1.0 + (boost_factor - 1.0) * (1.0 - coverage)
-            negative_weights = 1.0 + (boost_factor - 1.0) * torch.exp(-coverage * 5) # 使用指數衰減，只 boost 那些真的無關的
+            mask_no_diag = ~torch.eye(batch_size, dtype=torch.bool, device=x.device)
+            flat_coverage = coverage[mask_no_diag]
+            threshold_val = torch.quantile(flat_coverage, q=0.3) # 先抓錢30% 的 coverage 作為門檻
+            negative_weights = torch.where(coverage <= threshold_val, 
+                                        torch.full_like(coverage, boost_factor), 
+                                        torch.ones_like(coverage))
         elif reweight_strategy == "thresholded":
             negative_weights = torch.where(coverage > coverage_threshold, 1.0 - coverage, torch.ones_like(coverage))
         else:
@@ -1760,7 +1762,7 @@ if __name__ == '__main__':
                                                                                 reweight_strategy=args.reweight_strategy, coverage_threshold=args.coverage_threshold, 
                                                                                 renormalization=args.renormalization, RBO_anchor=args.RBO_anchor,
                                                                                 denominator_anchor=args.denominator_anchor, RBO_p=args.RBO_p,
-                                                                                RBO_save_path=rbo_save_dir)
+                                                                                RBO_save_path=rbo_save_dir, boost_factor=args.tn_weight)
                 epoch_en_stats['soft_pFN_recall'] += en_stats['soft_pFN_recall']
                 epoch_en_stats['soft_pFN_precision'] += en_stats['soft_pFN_precision']
                 epoch_en_stats['soft_pFN_f1'] += en_stats['soft_pFN_f1']
