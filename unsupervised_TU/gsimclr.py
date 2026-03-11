@@ -868,9 +868,12 @@ class simclr(nn.Module):
             current_sum = negative_weights.sum(dim=1, keepdim=True)
             scale_factor = target_sum / (current_sum + 1e-8)
             normalized_weights = negative_weights * scale_factor
+            plot_sorted_rbo_heatmap(normalized_weights.cpu().numpy(), labels.cpu().numpy(), cur_epoch, f"{RBO_save_path}/rbo_heatmap_renorm.png")
         else:
             normalized_weights = negative_weights
             scale_factor = torch.ones(batch_size, 1, device=x.device)
+
+        plot_sorted_rbo_heatmap(negative_weights.cpu().numpy(), labels.cpu().numpy(), cur_epoch, f"{RBO_save_path}/rbo_heatmap_ori.png")
 
         self_pos = sim_matrix.diag()
         weighted_neg_sim = (sim_matrix * normalized_weights).sum(dim=1) if not denominator_anchor else (sim_matrix_anchor * normalized_weights).sum(dim=1)
