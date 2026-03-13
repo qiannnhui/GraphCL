@@ -851,6 +851,23 @@ class simclr(nn.Module):
             negative_weights = torch.where(coverage <= threshold_val, 
                                         torch.full_like(coverage, boost_factor), 
                                         torch.ones_like(coverage))
+        elif reweight_strategy == "hybrid":
+            mask_no_diag = ~torch.eye(batch_size, dtype=torch.bool, device=device)
+            flat_coverage = coverage[mask_no_diag]
+            
+            tn_threshold = torch.quantile(flat_coverage, q=0.3) 
+            fn_threshold = torch.quantile(flat_coverage, q=0.7) 
+
+            negative_weights = torch.ones_like(coverage)
+
+            negative_weights = torch.where(coverage <= tn_threshold, 
+                                           torch.full_like(coverage, boost_factor), 
+                                           negative_weights)
+            
+            down_weight = 1.0 / boost_factor
+            negative_weights = torch.where(coverage >= fn_threshold, 
+                                           torch.full_like(coverage, down_weight), 
+                                           negative_weights)
         elif reweight_strategy == "thresholded":
             negative_weights = torch.where(coverage > coverage_threshold, 1.0 - coverage, torch.ones_like(coverage))
         else:

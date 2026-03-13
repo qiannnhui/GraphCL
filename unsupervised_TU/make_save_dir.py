@@ -14,7 +14,7 @@ def make_save_dir(base="./result", args=None, extra=None, add_timestamp=False):
     path_hierarchy = [
         ("mode", args.mode),
         ("RBO_p", args.RBO_p) if args.mode=="reweight_FNs_by_RBO" and hasattr(args, "RBO_p") else None,
-        ("tn_weight", args.tn_weight) if args.mode=="reweight_FNs_by_RBO" and args.reweight_strategy=="boost_TNs" and hasattr(args, "tn_weight") else None,
+        ("tn_weight", args.tn_weight) if args.mode=="reweight_FNs_by_RBO" and args.reweight_strategy=="boost_TNs" or args.reweight_strategy=="hybrid" and hasattr(args, "tn_weight") else None,
         ("DS", args.DS),
         ("neg_include_self", args.neg_include_self) if args.neg_include_self else None,
         ("aug", args.aug) if args.rotate == "none" else None,
@@ -24,7 +24,7 @@ def make_save_dir(base="./result", args=None, extra=None, add_timestamp=False):
         ("or_loss", args.or_loss) if args.or_loss else None,
         ("EN_THRESHOLD", f"{args.base_en_threshold}-{args.max_en_threshold}") if args.mode in ["rm_FNs_by_ENs", "reweight_FNs_by_ENs"] and hasattr(args, "base_en_threshold") and hasattr(args, "max_en_threshold") else None,
         ("Reweight_Strategy", args.reweight_strategy) if args.mode=="reweight_FNs_by_ENs" and hasattr(args, "reweight_strategy") else None,
-        ("Reweight_Strategy", args.reweight_strategy) if args.mode=="reweight_FNs_by_RBO" and args.reweight_strategy=="boost_TNs" else None,
+        ("Reweight_Strategy", args.reweight_strategy) if args.mode=="reweight_FNs_by_RBO" and args.reweight_strategy=="boost_TNs" or args.reweight_strategy=="hybrid" else None,
         ("Coverage_Threshold", args.coverage_threshold) if args.mode=="rm_FNs_by_ENs" or (args.mode == "reweight_FNs_by_ENs" and getattr(args, "reweight_strategy", "") == "thresholded") and hasattr(args, "coverage_threshold") else None,
         ("Renormalization", args.renormalization) if args.renormalization else None,
         ("RBO_anchor", args.RBO_anchor) if args.RBO_anchor else None,
