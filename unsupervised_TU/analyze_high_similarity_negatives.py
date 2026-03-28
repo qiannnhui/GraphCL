@@ -84,7 +84,7 @@ def analyze_high_similarity_negatives(model, dataloader_eval, device, args, simi
             data, _ = data
             data = data.to(device)
             # 假設 x_aug 是 x 的複製，我們只使用 x
-            x, _ = model(data.x, data.edge_index, data.batch, data.num_graphs)
+            x, _ = model(data.x, data.edge_index, data.batch)
             
             all_x.append(x.cpu())
             # print("data.y = ", data.y)

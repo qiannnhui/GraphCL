@@ -289,18 +289,14 @@ class TUDataset_aug(InMemoryDataset):
             else:
                 print('sample error')
                 assert False
-
-
-
-
-
-
         else:
             print('augmentation error')
             assert False
 
         # print(data, data_aug)
         # assert False
+        data.idx = torch.tensor([idx], dtype=torch.long)
+        data_aug.idx = torch.tensor([idx], dtype=torch.long)
 
         return data, data_aug
 

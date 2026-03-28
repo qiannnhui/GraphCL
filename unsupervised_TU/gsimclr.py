@@ -12,6 +12,10 @@ import torch.nn.functional as F
 import numpy as np
 import json
 # from core.encoders import *
+import networkx as nx
+# from grakel.kernels import WeisfeilerLehman, VertexHistogram
+from torch_geometric.utils import to_networkx, degree, k_hop_subgraph, subgraph
+from torch_scatter import scatter_max
 
 # from torch_geometric.datasets import TUDataset
 from aug import TUDataset_aug as TUDataset
@@ -41,6 +45,7 @@ from plot_KDE import plot_kde_unitcircle_kde
 from plot_theta_epoch import plot_theta_per_epoch
 from plot_sim_epoch import plot_sim_per_epoch
 from plot_RBO_heatmap import plot_sorted_rbo_heatmap
+from plot_RBO_cosine_diag import plot_rbo_cosine_diagnosis
 from make_save_dir import make_save_dir # 引入創建儲存目錄的函數
 from save_load_ckpts import load_checkpoint, save_checkpoint # 引入檢查點函數
 from utils import create_pos_and_neg_mask, calculate_f1_scores_by_deg_boundary
@@ -48,73 +53,12 @@ from analyze_high_similarity_negatives import analyze_high_similarity_negatives
 from unified_loss import unified_loss, get_pair_angles, flexible_hard_mining_loss
 from rotate_by_angle import rotate_embedding_high_dim_by_angle, rotate_embedding_high_dim, rotate_embedding_targeted_angle
 
-# class GcnInfomax(nn.Module):
-#   def __init__(self, hidden_dim, num_gc_layers, alpha=0.5, beta=1., gamma=.1):
-#     super(GcnInfomax, self).__init__()
-
-#     self.alpha = alpha
-#     self.beta = beta
-#     self.gamma = gamma
-#     self.prior = args.prior
-
-#     self.embedding_dim = mi_units = hidden_dim * num_gc_layers
-#     self.encoder = Encoder(dataset_num_features, hidden_dim, num_gc_layers)
-
-#     self.local_d = FF(self.embedding_dim)
-#     self.global_d = FF(self.embedding_dim)
-#     # self.local_d = MI1x1ConvNet(self.embedding_dim, mi_units)
-#     # self.global_d = MIFCNet(self.embedding_dim, mi_units)
-
-#     if self.prior:
-#         self.prior_d = PriorDiscriminator(self.embedding_dim)
-
-#     self.init_emb()
-
-#   def init_emb(self):
-#     initrange = -1.5 / self.embedding_dim
-#     for m in self.modules():
-#         if isinstance(m, nn.Linear):
-#             torch.nn.init.xavier_uniform_(m.weight.data)
-#             if m.bias is not None:
-#                 m.bias.data.fill_(0.0)
-
-
-#   def forward(self, x, edge_index, batch, num_graphs):
-
-#     # batch_size = data.num_graphs
-#     if x is None:
-#         x = torch.ones(batch.shape[0]).to(device)
-
-#     y, M = self.encoder(x, edge_index, batch)
-    
-#     g_enc = self.global_d(y)
-#     l_enc = self.local_d(M)
-
-#     mode='fd'
-#     measure='JSD'
-#     local_global_loss = local_global_loss_(l_enc, g_enc, edge_index, batch, measure)
- 
-#     if self.prior:
-#         prior = torch.rand_like(y)
-#         term_a = torch.log(self.prior_d(prior)).mean()
-#         term_b = torch.log(1.0 - self.prior_d(y)).mean()
-#         PRIOR = - (term_a + term_b) * self.gamma
-#     else:
-#         PRIOR = 0
-    
-#     return local_global_loss + PRIOR
-
-
 class simclr(nn.Module):
-  def __init__(self, hidden_dim, num_gc_layers, alpha=0.5, beta=1., gamma=.1, shuffle_DBN=False, dataset_num_features=1):
+  def __init__(self, hidden_dim, num_gc_layers, dataset_size, shuffle_DBN=False, dataset_num_features=1, device='cuda'):
     super(simclr, self).__init__()
-
-    self.alpha = alpha
-    self.beta = beta
-    self.gamma = gamma
-
-    self.embedding_dim = mi_units = hidden_dim * num_gc_layers
+    self.embedding_dim = hidden_dim * num_gc_layers
     self.encoder = Encoder(dataset_num_features, hidden_dim, num_gc_layers)
+    self.device = device
 
     bn_layer = [DecorrelatedShuffledBatchNorm1d(self.embedding_dim)] if shuffle_DBN else []
     self.proj_head = nn.Sequential(
@@ -124,19 +68,16 @@ class simclr(nn.Module):
         nn.Linear(self.embedding_dim, self.embedding_dim)
     )
     self.init_emb()
+    self.register_buffer('rbo_consistency_count', torch.zeros(dataset_size, dataset_size, dtype=torch.int32))
 
   def init_emb(self):
-    initrange = -1.5 / self.embedding_dim
     for m in self.modules():
         if isinstance(m, nn.Linear):
             torch.nn.init.xavier_uniform_(m.weight.data)
             if m.bias is not None:
                 m.bias.data.fill_(0.0)
 
-
-  def forward(self, x, edge_index, batch, num_graphs):
-
-    # batch_size = data.num_graphs
+  def forward(self, x, edge_index, batch):
     if x is None:
         x = torch.ones(batch.shape[0]).to(device)
 
@@ -145,33 +86,6 @@ class simclr(nn.Module):
     y = self.proj_head(y)
     
     return y, M
-
-  def min_max_normalization(self, sim_matrix):
-      
-      min_sim = sim_matrix.min()
-      max_sim = sim_matrix.max()
-      normalized_sim = (sim_matrix - min_sim) / (max_sim - min_sim)
-        
-      return normalized_sim
-
-  def calculate_confusion_matrix(self, sim_matrix, pos_mask):
-
-      true_labels = pos_mask.float().view(-1).cpu().numpy()  # 轉換為 1D
-      pred_labels = (sim_matrix.view(-1) > 0.8).float().cpu().numpy()  # 相似度 > 0.5 判斷為正樣本
-      cm = confusion_matrix(true_labels, pred_labels)
-
-      return cm
-
-  def get_confusion_matrix(self, labels, sim_matrix, args, epoch=None):
-        pos_mask, neg_mask = create_pos_and_neg_mask(labels=labels)
-        # normalized_sim_matrix = self.min_max_normalization(sim_matrix=sim_matrix)
-        # cm = self.calculate_confusion_matrix(pos_mask=pos_mask, sim_matrix=normalized_sim_matrix)
-        # plot_similarity_matrix(sim_matrix=sim_matrix, pos_mask=pos_mask, file_name=f'epoch_{epoch}_not_normalized_{args.aug}_{args.mode}')
-        # plot_similarity_matrix(sim_matrix=normalized_sim_matrix, pos_mask=pos_mask, file_name=f'epoch_{epoch}_normalized_{args.aug}_{args.mode}')
-        # plot_similarity_distribution(sim_matrix=normalized_sim_matrix, pos_mask=pos_mask, file_name=f'sim_distribution_epoch_{epoch}_normalized_{args.aug}_{args.mode}')
-        plot_similarity_distribution(sim_matrix=sim_matrix, pos_mask=pos_mask, neg_mask=neg_mask, args=args, epoch=epoch)
-        # print("cm = ", cm)
-
 
   def plot_theta_l2(self, x, x_aug, labels):
         """
@@ -310,141 +224,6 @@ class simclr(nn.Module):
 
         return result
 
-  def _get_similarity_matrix(self, x, x_aug, similarity_measure="cosine", T=0.2):
-        
-        x_abs = x.norm(dim=1)
-        x_aug_abs = x_aug.norm(dim=1)
-
-        if similarity_measure == "cosine":
-            # Cosine similarity
-            cos_sim_matrix = torch.einsum('ik,jk->ij', x, x_aug) / torch.einsum('i,j->ij', x_abs, x_aug_abs)
-            cos_sim_matrix = torch.clamp(cos_sim_matrix, -1.0, 1.0)  # Clamp to avoid invalid values
-            sim_matrix = torch.exp(cos_sim_matrix / T)
-
-        elif similarity_measure == "l2":
-            # L2 norm similarity
-            l2_matrix = torch.cdist(x, x_aug, p=2)  # Pairwise L2 distance
-            l2_matrix = l2_matrix / l2_matrix.max()  # Normalize L2 norm to [0, 1]
-            sim_matrix = torch.exp(-l2_matrix / T)  # Convert distance to similarity
-
-        elif similarity_measure == "cosine+l2":
-            # Compute cosine similarity
-            cos_sim_matrix = torch.einsum('ik,jk->ij', x, x_aug) / torch.einsum('i,j->ij', x_abs, x_aug_abs)
-            cos_sim_matrix = torch.clamp(cos_sim_matrix, -1.0, 1.0)  # Clamp to avoid invalid values
-
-            # Compute L2 norm
-            l2_matrix = torch.cdist(x, x_aug, p=2)  # Pairwise L2 distance
-            l2_matrix = l2_matrix / l2_matrix.max()  # Normalize L2 norm to [0, 1]
-
-            # Combine cosine similarity and L2 norm
-            combined_matrix = cos_sim_matrix - l2_matrix  # Example: subtract L2 norm from cosine similarity
-            sim_matrix = torch.exp(combined_matrix / T)  # Convert to similarity
-
-        else:
-            raise ValueError(f"Unsupported similarity measure: {similarity_measure}")
-        
-        return sim_matrix
-  
-  def _sample_negative_mask(self, labels, batch_size, device, num_negatives=2):
-    """
-    為每個 Anchor 隨機採樣 num_negatives 個真正的負樣本 (不同標籤) 作為分母。
-    """
-    labels = labels.view(-1, 1)
-    neg_mask = torch.zeros((batch_size, batch_size), dtype=torch.bool, device=device)
-    
-    for i in range(batch_size):
-        # 找出所有真正的負樣本 (不同標籤)
-        true_neg_indices = (labels != labels[i]).nonzero(as_tuple=True)[0]
-        
-        if true_neg_indices.numel() > 0:
-            # 隨機採樣 num_negatives 個索引 (或所有可用的負樣本，如果少於 num_negatives)
-            num_to_sample = min(num_negatives, true_neg_indices.numel())
-            
-            # 確保採樣是唯一的
-            if num_to_sample > 0:
-                sampled_indices = true_neg_indices[torch.randperm(true_neg_indices.numel())[:num_to_sample]]
-                neg_mask[i, sampled_indices] = True
-        
-    return neg_mask
-
-  # 由於您沒有提供原始 simclr 類別，我們將假設這是 simclr 的方法
-  def _get_exp_indices(self, labels, batch_size, device):
-    """
-    為每個 Anchor z_i 找到一個實驗用的 Positive (FP) 和 Negatives (FN)。
-    
-    Args:
-        labels: 批次的真實標籤 (B, 1).
-    
-    Returns:
-        pos_indices (B,): 每個 Anchor 的 FP 樣本索引 (不同標籤的隨機樣本).
-        neg_mask (B, B): 每個 Anchor 的 FN 樣本掩碼 (相同標籤的所有其他樣本).
-    """
-    labels = labels.view(-1, 1)
-    
-    # 1. 構建 FP 樣本索引 (隨機選擇一個不同標籤的樣本)
-    fp_indices = torch.zeros(batch_size, dtype=torch.long, device=device)
-    
-    for i in range(batch_size):
-        # 找出所有不同標籤的樣本索引
-        diff_label_indices = (labels != labels[i]).nonzero(as_tuple=True)[0]
-        
-        if diff_label_indices.numel() > 0:
-            # 隨機挑選一個不同標籤的索引
-            rand_idx = torch.randint(0, diff_label_indices.numel(), (1,), device=device)
-            fp_indices[i] = diff_label_indices[rand_idx]
-        else:
-            # 如果 batch 內所有標籤都相同 (罕見)，則使用自身 (將導致 log(0) 或 NaN，但在 large batch 下應避免)
-            fp_indices[i] = i 
-
-    # 2. 構建 FN 樣本掩碼 (相同標籤的所有其他樣本)
-    pos_mask_all = labels.eq(labels.T) # (B, B)
-    neg_mask = pos_mask_all & ~torch.diag(torch.ones(batch_size, device=device, dtype=torch.bool))
-    
-    return fp_indices, neg_mask
-
-  def loss_cal_FN_FP(self, x, x_aug, labels=None, get_cm=False, epoch=None, FN=True, FP=True, FP_all=False):
-    '''極端的case看看FN, FP是否真的對結果造成很大的影響'''
-
-    T = 0.2
-    batch_size, _ = x.size()
-    x_abs = x.norm(dim=1)
-    x_aug_abs = x_aug.norm(dim=1)
-
-    # Note: 由於 x_aug 應該是 x 的複製，我們使用 x 和 x_aug_T
-    cos_sim_matrix = torch.einsum('ik,jk->ij', x, x_aug) / torch.einsum('i,j->ij', x_abs, x_aug_abs)
-    sim_matrix = torch.exp(cos_sim_matrix / T)
-
-    fp_indices, neg_mask = self._get_exp_indices(labels, batch_size, x.device)
-
-    # === 1. 分子 (Positive Sim - 使用 FP 樣本) ===
-    # 這裡的 fp_indices 是 z_j 的索引，所以我們從 sim_matrix 中取出 z_i 對應 z_j 的相似度
-    if FP:
-        fp_sim = sim_matrix[range(batch_size), fp_indices] # (B,)
-    elif not FP:
-        fp_sim = sim_matrix[range(batch_size), range(batch_size)]
-
-    if FP_all:
-        labels = labels.view(-1, 1)
-        pos_mask = labels.eq(labels.T)
-        pos_sim = sim_matrix * pos_mask
-        fp_sim = pos_sim.sum(dim=1) - sim_matrix.diag()
-
-    # === 2. 分母 (Negative Sim - 相同標籤的所有其他樣本) ===
-    # neg_mask 已經是相同標籤但排除自身的掩碼
-    if FN:
-        neg_sim_sum = (sim_matrix * neg_mask).sum(dim=1) # (B,)
-    elif not FN:
-        neg_sim_sum = sim_matrix.sum(dim=1) - sim_matrix.diag()
-
-    # === 3. 損失計算 (Logit = FP / Negatives) ===
-    # 這是 InfoNCE 的形式，但 FP 位於分子，Negatives 位於分母
-    loss = fp_sim / (neg_sim_sum + 1e-8)
-    loss = -torch.log(loss + 1e-8).mean()
-    
-    pos_sim_ = fp_sim.mean()
-    neg_sim_ = neg_sim_sum.mean()
-
-    return loss, pos_sim_, neg_sim_
 
   def identify_fn_by_en_curriculum(self, sim_matrix, labels, epoch, total_epochs, 
                                base_en_threshold=0.1, max_en_threshold=0.5, coverage_threshold=0.5):
@@ -511,65 +290,13 @@ class simclr(nn.Module):
         }
         
         return pred_fn_mask, stats
-
-  def identify_fn_by_en(self, sim_matrix, labels, top_k_en=10, coverage_threshold=0.5):
-        """
-        基於共享 Easy Negatives 識別 False Negatives 並計算指標
-        Args:
-            sim_matrix: (B, B) 相似度矩陣 (已經過 exp/T)
-            labels: (B,) 真實標籤
-            top_k_en: 取相似度最低的前 K 個作為 EN 集合
-            coverage_threshold: 共享 EN 的比例門檻，超過則判定為 FN
-        """
-        batch_size = sim_matrix.size(0)
-        device = sim_matrix.device
-        
-        # 1. 為每個樣本找出相似度最低的 Top-K (Easy Negatives)
-        # 取得排序索引，前 top_k_en 個就是相似度最小的
-        _, en_indices = torch.topk(sim_matrix, k=top_k_en, dim=1, largest=False)
-        
-        # 2. 構建 EN 掩碼矩陣 (B, B) -> 若 j 是 i 的 EN 則為 1
-        en_mask = torch.zeros_like(sim_matrix).scatter_(1, en_indices, 1.0)
-        
-        # 3. 計算樣本間共享 EN 的數量 (Matrix Multiplication)
-        # shared_count[i, j] 代表 i 和 j 共同擁有的 EN 數量
-        shared_count = torch.matmul(en_mask, en_mask.T)
-        
-        # 4. 計算共享比例並判定推斷出的 FN (Predicted FN)
-        # 排除自己 (對角線)
-        shared_ratio = shared_count / top_k_en
-        pred_fn_mask = (shared_ratio >= coverage_threshold)
-        diag_mask = torch.eye(batch_size, dtype=torch.bool, device=device)
-        pred_fn_mask = pred_fn_mask & ~diag_mask
-        
-        # 5. 真實 FN 統計 (Ground Truth)
-        # 真實 FN 定義：標籤相同但不是自己
-        labels_col = labels.view(-1, 1)
-        gt_fn_mask = labels_col.eq(labels_col.T) & ~diag_mask
-        
-        # 6. 計算 Precision, Recall, F1
-        tp = (pred_fn_mask & gt_fn_mask).sum().float()
-        fp = (pred_fn_mask & ~gt_fn_mask).sum().float()
-        fn = (~pred_fn_mask & gt_fn_mask).sum().float()
-        
-        precision = tp / (tp + fp + 1e-8)
-        recall = tp / (tp + fn + 1e-8)
-        f1 = 2 * (precision * recall) / (precision + recall + 1e-8)
-        
-        return pred_fn_mask, precision.item(), recall.item(), f1.item()
   
 #   def loss_cal_rm_FNs_by_ENs(self, x, x_aug, labels, top_k_en=10, coverage_threshold=0.5, neg_include_self=True):
   def loss_cal_rm_FNs_by_ENs(self, x, x_aug, labels, cur_epoch, total_epochs, base_en_threshold=0.1, max_en_threshold=0.5, coverage_threshold=0.5, neg_include_self=True):
         T = 0.2
         num_samples, _ = x.size()
-        # 計算全矩陣相似度
         sim_matrix = torch.exp(torch.mm(F.normalize(x, dim=1), F.normalize(x_aug, dim=1).T) / T)
-        
-        # 使用我們新寫的函數
-        # top_k 可以設為 batch_size 的 20%~30%
-        # pred_fn_mask, prec, rec, f1_score = self.identify_fn_by_en(
-        #     sim_matrix, labels, top_k_en=top_k_en, coverage_threshold=coverage_threshold
-        # )
+
         pred_fn_mask, en_stats = self.identify_fn_by_en_curriculum(
                     sim_matrix, labels, cur_epoch, total_epochs,
                     base_en_threshold=base_en_threshold, max_en_threshold=max_en_threshold, coverage_threshold=coverage_threshold
@@ -587,9 +314,6 @@ class simclr(nn.Module):
         # --- 計算 Loss ---
         self_pos = sim_matrix.diag() # (B,)
         
-        # 定義分母：原本是 sum(sim) - self_pos
-        # 現在要額外扣除 pred_fn_mask 標註出的項
-        # 我們建立一個 mask，只保留真正的 Negative (非 Self 且 非推斷出的 FN)
         denom_mask = torch.ones_like(sim_matrix, dtype=torch.bool)
         diag_mask = torch.eye(num_samples, dtype=torch.bool, device=device)
         denom_mask[diag_mask] = False if not neg_include_self else True    # 扣除自己 if neg_include_self=False
@@ -600,50 +324,6 @@ class simclr(nn.Module):
         loss = -torch.log(self_pos / (neg_sim_sum + 1e-8) + 1e-8).mean()
 
         return loss, en_stats
-        # return loss, prec, rec, f1_score
-
-  def calculate_ranking_metrics(self, sim_matrix, labels, k_list=[1, 5, 10]):
-        device = sim_matrix.device
-        batch_size = sim_matrix.size(0)
-        
-        # 1. 建立 Ground Truth Mask (排除自己)
-        labels_col = labels.view(-1, 1)
-        gt_mask = labels_col.eq(labels_col.T).float()
-        diag_mask = torch.eye(batch_size, device=device).bool()
-        
-        # 核心修正：只取出非對角線的元素，讓每行變成 batch_size - 1
-        # 我們利用 mask 提取出每一行除了自己以外的其他樣本
-        # 這裡用 reshape(-1) 處理會比較麻煩，建議用 masked_select 再 view
-        gt_mask_no_self = gt_mask[~diag_mask].view(batch_size, batch_size - 1)
-        sim_matrix_no_self = sim_matrix[~diag_mask].view(batch_size, batch_size - 1)
-
-        # 2. 排序剩餘的樣本 (B, B-1)
-        _, indices = torch.sort(sim_matrix_no_self, descending=True, dim=1)
-        ranked_gt = torch.gather(gt_mask_no_self, 1, indices)
-
-        results = {}
-        # --- 計算 Recall@K ---
-        for k in k_list:
-            if k < batch_size:
-                # 只要前 k 個裡面有任何一個同類，Recall@K 就計為 1
-                recall_at_k = (ranked_gt[:, :k].sum(dim=1) > 0).float().mean()
-                results[f'Recall@{k}'] = recall_at_k.item()
-
-        # --- 計算 mAP ---
-        # ranked_gt 維度現在是 (B, 127)
-        cumsum_gt = torch.cumsum(ranked_gt, dim=1) 
-        # range_vec 長度也是 127
-        range_vec = torch.arange(1, batch_size, device=device).float() 
-        
-        precision_at_i = cumsum_gt / range_vec # 現在都是 127，可以相除
-        
-        relevant_precision = precision_at_i * ranked_gt
-        num_relevant = gt_mask_no_self.sum(dim=1)
-        
-        ap = relevant_precision.sum(dim=1) / (num_relevant + 1e-8)
-        results['mAP'] = ap[num_relevant > 0].mean().item() if (num_relevant > 0).any() else 0
-
-        return results
 
   def identify_fn_by_en_coverage(self, sim_matrix, labels, epoch, total_epochs, 
                                    base_en_threshold=0.3, max_en_threshold=0.6):
@@ -687,8 +367,6 @@ class simclr(nn.Module):
             'avg_coverage': coverage[gt_fn_mask.bool()].mean().item() if gt_fn_mask.any() else 0,
             'curr_en_threshold': curr_en_threshold
         }
-        # ranking_stats = self.calculate_ranking_metrics(sim_matrix, labels, k_list=[1, 5, 10])
-        # stats.update(ranking_stats)
         ranking_stats = self.validate_rbo_ranking(coverage, gt_fn_mask, k_list=[1, 5, 10, 50])
         stats.update(ranking_stats)
         
@@ -763,52 +441,112 @@ class simclr(nn.Module):
         ranking_stats[f'RBO_TN_Recall@{k}'] = (tn_hits / gt_tn_mask.sum()).item() if gt_tn_mask.sum() > 0 else 0
         
     return ranking_stats
+  
+  def compute_causal_subgraph_sim(self, data, model, device, num_trials=10, num_hops=2):
+    model.eval()
+    data = data.to(device)
+    batch_size = data.num_graphs
+    num_total_nodes = data.batch.size(0)
+    
+    with torch.no_grad():
+        # 1. 取得基準 Embedding
+        orig_z, _ = model.encoder(data.x, data.edge_index, data.batch)
+        orig_z = F.normalize(orig_z, dim=1)
+    
+    max_sims = torch.full((batch_size,), -1.0, device=device)
+    best_subgraph_embs = orig_z.clone()
 
-  def identify_fn_by_rbo_coverage(self, sim_matrix, labels, p=0.9):
+    with torch.no_grad():
+        for _ in range(num_trials):
+            rand_vals = torch.rand(num_total_nodes, device=device)
+            
+            seeds_tensor = torch.zeros(batch_size, dtype=torch.long, device=device)
+            for i in range(batch_size):
+                mask_i = (data.batch == i)
+                if mask_i.any():
+                    seeds_tensor[i] = rand_vals.masked_fill(~mask_i, -1e9).argmax()
+
+            subset, sub_edge_index, _, _ = k_hop_subgraph(
+                node_idx=seeds_tensor,
+                num_hops=num_hops,
+                edge_index=data.edge_index,
+                relabel_nodes=True, 
+                num_nodes=num_total_nodes
+            )
+
+            sub_x = data.x[subset] if data.x is not None else None
+            sub_batch = data.batch[subset]
+
+            try:
+                z_sub, _ = model.encoder(sub_x, sub_edge_index, sub_batch)
+                z_sub = F.normalize(z_sub, dim=1)
+                
+                current_sim = (orig_z * z_sub).sum(dim=1) 
+                
+                update_mask = current_sim > max_sims
+                best_subgraph_embs[update_mask] = z_sub[update_mask]
+                max_sims[update_mask] = current_sim[update_mask]
+            except Exception:
+                continue
+    causal_sim = torch.mm(best_subgraph_embs, best_subgraph_embs.t())
+    
+    return causal_sim.cpu()
+
+  def identify_fn_by_rbo_coverage(self, sim_matrix, labels, p=0.9, depth=None):
     """
     使用純 RBO 權重計算樣本間的 Coverage。
     sim_matrix: [B, B] 相似度矩陣
     p: RBO 的持久度參數，越小越看重 Top 排名
     """
-    batch_size = sim_matrix.size(0)
+    B = sim_matrix.size(0)
+    if depth is None:
+        depth = B // 2
     device = sim_matrix.device
-    diag_mask = torch.eye(batch_size, dtype=torch.bool, device=device)
+    diag_mask = torch.eye(B, dtype=torch.bool, device=device)
+    # remove self-similarity for ranking
+    # sim_matrix = sim_matrix.masked_fill(diag_mask, -1.0) # 先把自己設為 -1，確保不會被選為 EN 或 TN
     
     # 1. 獲取排序索引 (相似度由高到低，即最相似的排在前面)
     # sorted_indices: [batch_size, batch_size]
     _, sorted_indices = torch.sort(sim_matrix, dim=1, descending=True)
-    
-    # 2. 初始化變數
-    coverage = torch.zeros_like(sim_matrix)
-    current_top_masks = torch.zeros_like(sim_matrix)
-    
-    # 3. 遍歷所有深度 d (從 1 到 batch_size)
-    # 這裡直接計算完整的 RBO 權重加總
-    for d in range(1, batch_size + 1):
-        # 標記每個樣本在深度 d 的項目
-        rank_d_indices = sorted_indices[:, d-1].view(-1, 1)
-        current_top_masks.scatter_(1, rank_d_indices, 1.0)
-        
-        # Agreement_d = (交集數量 / d)
-        # 使用矩陣乘法一次算出所有對象的交集數
-        shared_count = torch.matmul(current_top_masks, current_top_masks.T)
-        agreement_d = shared_count / d
-        
-        # RBO 權重: (1-p) * p^(d-1)
-        weight = (1 - p) * (p ** (d - 1))
-        coverage += weight * agreement_d
+    top_indices = sorted_indices[:, :depth] 
 
-    # 4. 移除自相關並計算指標
-    coverage = coverage.masked_fill(diag_mask, 0.0)
-    # symmetricize coverage
-    # coverage = torch.sqrt(coverage * coverage.T)
+    # 2. 建立 (depth, B, B) 的掩碼矩陣
+    # 我們改用一個更安全的方法來填充 masks
+    masks = torch.zeros((depth, B, B), device=device)
     
-    # 真實標籤
+    # 利用進階索引一次性填充所有深度的 one-hot
+    d_idx = torch.arange(depth, device=device)
+    b_idx = torch.arange(B, device=device)
+    
+    # 這裡的邏輯：對於每個深度 d，在第 b 列的 top_indices[b, d] 位置填入 1
+    # masks[d_idx, b_idx, top_indices[b_idx, d_idx]] = 1.0
+    # 我們需要轉置 top_indices 來匹配 (depth, B)
+    masks[d_idx.view(-1, 1), b_idx.view(1, -1), top_indices.t()] = 1.0
+    
+    # 3. 累積 Agreement (等同於 RBO 的逐層交集)
+    # 沿著 depth 維度做前綴和，得到「前 d 名的成員集合」
+    current_top_masks_all = torch.cumsum(masks, dim=0) # (depth, B, B)
+    
+    # 4. 矩陣化計算交集數
+    # 使用 bmm (batch matrix multiplication): (depth, B, B) x (depth, B, B)
+    shared_counts_all = torch.bmm(current_top_masks_all, current_top_masks_all.transpose(1, 2))
+    
+    # 5. 計算 RBO 加權平均
+    d_vec = torch.arange(1, depth + 1, device=device).float().view(-1, 1, 1)
+    agreements_all = shared_counts_all / d_vec
+    weights = (1 - p) * (p ** (d_vec - 1))
+    
+    coverage = torch.sum(weights * agreements_all, dim=0) # (B, B)
+
+    # --- 後續統計邏輯不變 ---
+    diag_mask = torch.eye(B, dtype=torch.bool, device=device)
+    coverage = coverage.masked_fill(diag_mask, 0.0)
+    
     labels_col = labels.view(-1, 1)
     gt_fn_mask = (labels_col.eq(labels_col.T) & ~diag_mask).float() 
     gt_tn_mask = (~labels_col.eq(labels_col.T) & ~diag_mask).float() 
 
-    # Soft Metrics 計算
     soft_tp = torch.sum(coverage * gt_fn_mask)
     soft_fp = torch.sum(coverage * gt_tn_mask)
     soft_fn = torch.sum((1 - coverage) * gt_fn_mask)
@@ -828,20 +566,69 @@ class simclr(nn.Module):
     
     return coverage, stats
 
-  def loss_cal_reweighted_FNs_by_RBO(self, x, x_aug, labels, cur_epoch=0, total_epochs=0, 
+  def compute_geometry_jaccard_sim(self, data, max_deg=20):
+        edge_index = data.edge_index
+        batch = data.batch
+        num_graphs = data.num_graphs
+        deg = degree(edge_index[0], dtype=torch.long)
+        deg_clamped = deg.clamp(max=max_deg)
+        deg_onehot = F.one_hot(deg_clamped, num_classes=max_deg + 1).float()
+        
+        graph_hist = torch.zeros((num_graphs, max_deg + 1), device=self.device)
+        graph_hist.scatter_add_(0, batch.view(-1, 1).expand(-1, max_deg + 1), deg_onehot)
+
+        A = graph_hist.unsqueeze(1) 
+        B = graph_hist.unsqueeze(0) 
+        intersection = torch.min(A, B).sum(dim=-1)
+        union = torch.max(A, B).sum(dim=-1)
+        return intersection / (union + 1e-8)
+
+  def loss_cal_reweighted_FNs_by_RBO(self, x, x_aug, labels, batch_indices, geo_sim_matrix, cur_epoch=0, total_epochs=0, 
                                        neg_include_self=True, reweight_strategy="1-coverage", RBO_p=0.9,
                                        coverage_threshold=0.5, renormalization=True, RBO_anchor=False, 
                                        denominator_anchor=False, RBO_save_path="./", boost_factor=2.0):
         T = 0.2
         batch_size, _ = x.size()
+        # raw_cos_matrix = torch.mm(F.normalize(x, dim=1), F.normalize(x_aug, dim=1).T)
         sim_matrix = torch.exp(torch.mm(F.normalize(x, dim=1), F.normalize(x_aug, dim=1).T) / T)
         sim_matrix_anchor = torch.exp(torch.mm(F.normalize(x, dim=1), F.normalize(x, dim=1).T) / T)
+        coverage, stats = self.identify_fn_by_rbo_coverage(geo_sim_matrix, labels, p=RBO_p)
         
-        if RBO_anchor:
-            coverage, stats = self.identify_fn_by_rbo_coverage(sim_matrix_anchor, labels, p=RBO_p)
+        # if RBO_anchor:
+        #     coverage, stats = self.identify_fn_by_rbo_coverage(sim_matrix_anchor, labels, p=RBO_p)
+        # else:
+        #     coverage, stats = self.identify_fn_by_rbo_coverage(sim_matrix, labels, p=RBO_p)
+        
+        '''
+        # add consistency count for each pair (temporal information)
+        idx_i, idx_j = batch_indices.view(-1, 1), batch_indices.view(1, -1)
+        current_hit = coverage > 0.4  # 當前門檻
+        
+        # 核心邏輯：命中則加1，沒命中則歸零
+        with torch.no_grad():
+            updated_count = torch.where(current_hit, 
+                                        self.rbo_consistency_count[idx_i, idx_j] + 1, 
+                                        torch.zeros_like(self.rbo_consistency_count[idx_i, idx_j]))
+            self.rbo_consistency_count[idx_i, idx_j] = updated_count
+
+        # 3. 篩選出「轉正」的 FN (例如連續 3 次命中)
+        # 這些是我們真正要拉近的樣本
+        final_fn_mask = (updated_count >= 5)
+        
+        # 4. [你的需求] 計算 Precision
+        # A. 當前這一秒的 Precision (包含閃現者)
+        gt_mask = labels.view(-1, 1).eq(labels.view(1, -1)) & ~torch.eye(batch_size, device=labels.device).bool()
+        current_precision = (current_hit.float() * gt_mask.float()).sum() / (current_hit.sum() + 1e-8)
+        
+        # B. 「連續穩定者」的 Precision (這是你真正拉近的人)
+        stable_fn_count = final_fn_mask.sum().item()
+        if stable_fn_count > 0:
+            stable_precision = (final_fn_mask.float() * gt_mask.float()).sum() / (stable_fn_count + 1e-8)
         else:
-            coverage, stats = self.identify_fn_by_rbo_coverage(sim_matrix, labels, p=RBO_p)
-        
+            stable_precision = 0.0
+
+        print(f"Epoch {cur_epoch} | Batch Precision: {current_precision:.4f} | Stable Precision: {stable_precision:.4f} | Final FNs: {stable_fn_count}")
+        '''
         if reweight_strategy == "1-coverage":
             negative_weights = 1.0 - coverage
         elif reweight_strategy == "boost_TNs":
@@ -891,6 +678,13 @@ class simclr(nn.Module):
             scale_factor = torch.ones(batch_size, 1, device=x.device)
 
         plot_sorted_rbo_heatmap(negative_weights.cpu().numpy(), labels.cpu().numpy(), cur_epoch, f"{RBO_save_path}/rbo_heatmap_ori.png")
+        # plot_rbo_cosine_diagnosis(
+        #     sim_matrix=raw_cos_matrix, 
+        #     coverage=coverage, 
+        #     labels=labels, 
+        #     epoch=cur_epoch, 
+        #     save_dir=f"{RBO_save_path}/diagnosis"
+        # )
 
         self_pos = sim_matrix.diag()
         weighted_neg_sim = (sim_matrix * normalized_weights).sum(dim=1) if not denominator_anchor else (sim_matrix_anchor * normalized_weights).sum(dim=1)
@@ -899,152 +693,6 @@ class simclr(nn.Module):
         stats['avg_scale_factor'] = scale_factor.mean().item()
         return loss, coverage, stats
 
-  def loss_cal(self, x, x_aug, labels, get_cm=False, epoch=None):
-
-    T = 0.2
-    batch_size, _ = x.size()
-    x_abs = x.norm(dim=1)
-    x_aug_abs = x_aug.norm(dim=1)
-
-    sim_matrix = torch.einsum('ik,jk->ij', x, x_aug) / torch.einsum('i,j->ij', x_abs, x_aug_abs)
-    sim_matrix = torch.exp(sim_matrix / T)
-    self_pos = sim_matrix[range(batch_size), range(batch_size)]
-
-    labels = labels.view(-1, 1)
-    pos_mask = labels.eq(labels.T)
-
-    # cal negative cheated (take away the real positive)
-    pos_sim = sim_matrix * pos_mask
-    pos_sim_sum = pos_sim.sum(dim=1)
-    neg_sim_sum = sim_matrix.sum(dim=1) - pos_sim_sum
-
-    loss = self_pos / neg_sim_sum
-    loss = -torch.log(loss + 1e-8).mean()  # 避免 log(0)
-    pos_sim_ = self_pos.mean()
-    neg_sim_ = neg_sim_sum.mean()
-
-    if get_cm:
-       self.get_confusion_matrix(labels=labels, sim_matrix=sim_matrix, args=args, epoch=epoch)
-
-    return loss, pos_sim_, neg_sim_
-
-  def loss_cal_normal(self, x, x_aug, labels=None, get_cm=False, epoch=None):
-
-    T = 0.2
-    batch_size, _ = x.size()
-    x_abs = x.norm(dim=1)
-    x_aug_abs = x_aug.norm(dim=1)
-
-    cos_sim_matrix = torch.einsum('ik,jk->ij', x, x_aug) / torch.einsum('i,j->ij', x_abs, x_aug_abs)
-    sim_matrix = torch.exp(cos_sim_matrix / T)
-    self_pos = sim_matrix[range(batch_size), range(batch_size)]
-
-    neg_sim = (sim_matrix.sum(dim=1) - self_pos)
-    loss = self_pos / neg_sim
-    loss = - torch.log(loss + 1e-8).mean()
-    pos_sim_ = self_pos.mean()
-    neg_sim_ = neg_sim.mean()
-
-    if get_cm:
-       self.get_confusion_matrix(labels=labels, sim_matrix=cos_sim_matrix, args=args, epoch=epoch)
-
-    return loss, pos_sim_, neg_sim_
-
-
-  def loss_cal_rm_FN_only(self, x, x_aug, labels=None, get_cm=False, epoch=None):
-
-    T = 0.2
-    batch_size, _ = x.size()
-    x_abs = x.norm(dim=1)
-    x_aug_abs = x_aug.norm(dim=1)
-
-    cos_sim_matrix = torch.einsum('ik,jk->ij', x, x_aug) / torch.einsum('i,j->ij', x_abs, x_aug_abs)
-    sim_matrix = torch.exp(cos_sim_matrix / T)
-    self_pos = sim_matrix[range(batch_size), range(batch_size)]
-
-    # modified: self -> positive; negative:take away all cheated
-    labels = labels.view(-1, 1)
-    pos_mask = labels.eq(labels.T)
-
-    # cal negative cheated (take away the real positive)
-    pos_sim = sim_matrix * pos_mask
-    pos_sim_sum = pos_sim.sum(dim=1)
-    neg_sim_sum = sim_matrix.sum(dim=1) - pos_sim_sum
-
-    loss = self_pos / neg_sim_sum
-    loss = -torch.log(loss + 1e-8).mean()  # avoid log(0)
-    pos_sim_ = self_pos.mean()
-    neg_sim_ = neg_sim_sum.mean()
-
-    if get_cm:
-       self.get_confusion_matrix(labels=labels, sim_matrix=cos_sim_matrix, args=args, epoch=epoch)
-
-    return loss, pos_sim_, neg_sim_
-  
-
-  def loss_cal_cheated(self, x, x_aug, labels=None, get_cm=False, epoch=None, similarity_measure="cosine"):
-
-    T = 0.2
-    batch_size, _ = x.size()
-    sim_matrix = self._get_similarity_matrix(x=x, x_aug=x_aug, similarity_measure=similarity_measure, T=T)
-    self_pos = sim_matrix[range(batch_size), range(batch_size)]
-
-    # modified:all pos and all neg cal
-    labels = labels.view(-1, 1)  # 轉換為 (batch_size, 1) 方便比較
-    pos_mask = labels.eq(labels.T)  # 創建相同類別的對應矩陣
-
-    # 選擇 positive pairs（不一定是對角線）
-    pos_sim = sim_matrix * pos_mask  # 只保留相同類別的相似度值
-    # pos_sim_sum = pos_sim.sum(dim=1)
-    pos_sim_sum = pos_sim.sum(dim=1) - torch.diag(pos_sim)  # 排除自己本身
-
-    neg_sim_sum = sim_matrix.sum(dim=1) - pos_sim_sum - torch.diag(pos_sim)  # 所有樣本總和 - 正樣本總和
-
-    loss = pos_sim_sum / neg_sim_sum
-    loss = -torch.log(loss + 1e-8).mean()  # 避免 log(0)
-    pos_sim_ = pos_sim_sum.mean() # not self pos
-    # pos_sim_ = self_pos.mean() # self pos
-    neg_sim_ = neg_sim_sum.mean()
-
-    if get_cm:
-       self.get_confusion_matrix(labels=labels, sim_matrix=cos_sim_matrix, args=args, epoch=epoch)
-
-    return loss, pos_sim_, neg_sim_
-
-  def loss_cal_rm_FP_only(self, x, x_aug, labels=None, get_cm=False, epoch=None):
-
-    T = 0.2
-    batch_size, _ = x.size()
-    x_abs = x.norm(dim=1)
-    x_aug_abs = x_aug.norm(dim=1)
-
-    cos_sim_matrix = torch.einsum('ik,jk->ij', x, x_aug) / torch.einsum('i,j->ij', x_abs, x_aug_abs)
-    sim_matrix = torch.exp(cos_sim_matrix / T)
-    self_pos = sim_matrix[range(batch_size), range(batch_size)]
-
-    # modified:all pos and all neg cal
-    labels = labels.view(-1, 1)  # 轉換為 (batch_size, 1) 方便比較
-    pos_mask = labels.eq(labels.T)  # 創建相同類別的對應矩陣
-
-    # 選擇 positive pairs（不一定是對角線）
-    pos_sim = sim_matrix * pos_mask  # 只保留相同類別的相似度值
-    # pos_sim_sum = pos_sim.sum(dim=1)
-    pos_sim_sum = pos_sim.sum(dim=1) - torch.diag(pos_sim)  # 排除自己本身
-
-    neg_sim_sum = sim_matrix.sum(dim=1) - self_pos  # 所有樣本總和 - 正樣本總和
-
-    loss = pos_sim_sum / neg_sim_sum
-    loss = -torch.log(loss + 1e-8).mean()  # 避免 log(0)
-    pos_sim_ = pos_sim_sum.mean() # not self pos
-    # pos_sim_ = self_pos.mean() # self pos
-    neg_sim_ = neg_sim_sum.mean()
-
-    if get_cm:
-       self.get_confusion_matrix(labels=labels, sim_matrix=cos_sim_matrix, args=args, epoch=epoch)
-
-    return loss, pos_sim_, neg_sim_
-  
-#   def loss_cal_reweighted(self, x, x_aug, labels=None, get_cm=False, epoch=None):
   def loss_cal_reweighted(self, z_a, z_b, T=0.2, eps=1e-6, dist=False, neg_aug=False):
 
         # --- normalize for cosine ---
@@ -1136,179 +784,6 @@ class simclr(nn.Module):
 
     return loss, pos_sim_avg, fn_sim_avg
 
-  def reweighted_l2_loss(self, z_a, z_b, T=0.2, eps=1e-6, neg_aug=False): # Note: dist=True is now enforced for L2
-    
-    # z_a, z_b 是圖嵌入 (B, D)
-
-    # --- 1. L2 Distance Squared ---
-    # D_ab: z_a[i] vs z_b[j], D_aa: z_a[i] vs z_a[j]
-    D_ab_sq = torch.cdist(z_a, z_b, p=2).pow(2)  # (B, B)
-    if neg_aug:
-        D_aa_sq = D_ab_sq.clone()            # (B, B)
-        # D_ab_sq_full = torch.cdist(z_a, z_b, p=2).pow(2)
-    else:
-        D_aa_sq = torch.cdist(z_a, z_a, p=2).pow(2)  # (B, B)
-    
-    # pos_dist_sq: 正樣本對距離的平方 (B, 1)
-    pos_dist_sq = D_ab_sq.diagonal().unsqueeze(1) 
-
-    # --- 2. L2 Similarity (Sim_{L2} = exp(-D^2 / T)) ---
-    S_ab = torch.exp(-D_ab_sq / T) 
-    S_aa = torch.exp(-D_aa_sq / T) 
-    pos_sim = S_ab.diagonal() # S_i,i+ term (B,)
-    
-    # --- 3. False Negative (FN) / Reweighting Logic ---
-    
-    # FN 條件: 負樣本 z_a[j] 比正樣本 z_b[i] 更接近錨點 z_a[i] (距離小於)
-    # 由於我們只使用 L2 距離，且已將 dist 邏輯納入，因此簡化 FN 判斷
-    FN_matrix = D_aa_sq <= pos_dist_sq             # (B,B)
-    
-    # 將 FN 矩陣作為 false_mask (忽略 dist 和 neg_aug 複雜邏輯)
-    false_mask = FN_matrix 
-    false_mask.fill_diagonal_(False)               # 排除 i==i
-    
-    # reweighting
-    W = torch.full_like(S_aa, self.w_easy)         # Assume all easy
-    W[false_mask] = 0.0                            # reweight false negatives (W=0)
-    W.fill_diagonal_(0.0)                          # 確保 i==i 權重為 0
-
-    # === 4. Pos Pairs Loss Term ===
-    # log(S_i,i+)
-    log_pos = torch.log(pos_sim + eps)             # (B,)
-
-    # === 5. Neg Pairs Loss Term (logsumexp) ===
-    # logit_neg = log(W * S_aa) = log(W) + log(S_aa) = log(W) - D_aa_sq / T
-    log_W = torch.log(W + eps)
-    log_S_aa = -D_aa_sq / T
-    logit_neg = log_W + log_S_aa                   # (B,B)
-    
-    # log(sum_{j != i} exp(logit_neg))
-    # 由於 W[i,i] = 0，logsumexp 會自動排除對角線項
-    log_denom = torch.logsumexp(logit_neg, dim=1)  # (B,)
-
-    # === 6. Final Loss ===
-    # InfoNCE loss: - log(pos / denom) = - (log(pos) - log(denom))
-    pos_sim_ = pos_sim.mean()
-    neg_sim_ = (S_aa * W).sum(dim=1).mean()
-
-    return -(log_pos - log_denom).mean(), FN_matrix, pos_sim_, neg_sim_
-  
-  def loss_cal_custom_sampling(self, x, x_aug, labels=None, get_cm=False, epoch=None, mode='sparse_neg'):
-    """
-    實現兩種客製化採樣模式的 InfoNCE 損失。
-    
-    Args:
-        mode ('sparse_neg' or 'random_pos'):
-            'sparse_neg': 分子為真正樣本，分母為兩個隨機真負樣本。
-            'random_pos': 分子為隨機一半樣本，分母為剩餘一半樣本。
-    """
-    T = 0.2
-    batch_size, _ = x.size()
-    
-    # --- 相似度計算 ---
-    x_abs = x.norm(dim=1)
-    x_aug_abs = x_aug.norm(dim=1)
-    cos_sim_matrix = torch.einsum('ik,jk->ij', x, x_aug) / torch.einsum('i,j->ij', x_abs, x_aug_abs)
-    sim_matrix = torch.exp(cos_sim_matrix / T)
-    
-    labels = labels.view(-1, 1)
-    
-    if mode == 'sparse_neg':
-        # ==== 選擇 A: 稀疏負樣本 (模擬極端 InfoNCE) ====
-        
-        # 1. 分子 (Positive Sim): 隨機選擇一個同標籤但非自身的樣本
-        pos_indices = torch.zeros(batch_size, dtype=torch.long, device=x.device)
-        for i in range(batch_size):
-            # 找出所有真正的正樣本 (同標籤且非自身)
-            true_pos_indices = (labels.eq(labels[i]) & ~torch.diag(torch.ones(batch_size, device=x.device, dtype=torch.bool))).nonzero(as_tuple=True)[0]
-            
-            if true_pos_indices.numel() > 0:
-                # 隨機挑選一個真正的正樣本
-                rand_idx = torch.randint(0, true_pos_indices.numel(), (1,), device=x.device)
-                pos_indices[i] = true_pos_indices[rand_idx]
-            else:
-                # 如果 batch 內沒有其他同類樣本，則使用自身 (這是回退，不理想)
-                pos_indices[i] = i 
-
-        fp_sim = sim_matrix[range(batch_size), pos_indices] # (B,)        
-        
-        # 2. 分母 (Negative Sim): 隨機採樣兩個真正的負樣本 (不同標籤)
-        neg_mask = self._sample_negative_mask(labels, batch_size, x.device, num_negatives=2)
-        
-        # 計算分母總和
-        neg_sim_sum = (sim_matrix * neg_mask).sum(dim=1) # (B,)
-        
-    elif mode == 'random_pos':
-        # ==== 選擇 B: 隨機分子 (隨機選擇一半作為 Positive Pairs) ====
-        
-        # 1. 隨機分數矩陣
-        # 創建一個與 sim_matrix 大小相同的隨機分數，用於獨立排序
-        # 這張分數矩陣的每一行都會被獨立地用來決定哪些是 Positives
-        random_scores = torch.rand((batch_size, batch_size), device=x.device)
-        
-        # 2. 計算分割點 (約 N/2)
-        split_count = batch_size // 2
-        
-        # 3. 獲取 Positives Set (分子) 的掩碼
-        # 對每一行獨立地找出分數最高的 split_count 個索引
-        # argsort() 進行排序，[-split_count:] 獲取最大的 N/2 個索引
-        
-        # 獲取排序後的索引 (從最小到最大)
-        sorted_indices = torch.argsort(random_scores, dim=1)
-        
-        # 找出作為 Positives 的 N/2 個索引 (分數最大的 N/2 個)
-        pos_indices_for_each_row = sorted_indices[:, -split_count:] # (B, split_count)
-        
-        # 構建 Positives Mask (pos_mask)
-        pos_mask = torch.zeros((batch_size, batch_size), dtype=torch.bool, device=x.device)
-        
-        # 使用 scatter_ 設置掩碼：對於每一行 i，將 pos_indices_for_each_row[i] 對應的列設置為 True
-        # 這一步實現了：pos_mask[i, j] = True 如果 j 被 Anchor i 隨機選為 Positives
-        pos_mask.scatter_(dim=1, index=pos_indices_for_each_row, src=torch.ones_like(pos_indices_for_each_row, dtype=torch.bool))
-
-        # 4. 構建 Negatives Set (分母) 的掩碼
-        # Negatives Set 就是 Positives Set 之外的所有樣本
-        # neg_mask = ~pos_mask
-        
-        # 5. 清理對角線 (防止 Self-Similarity 被錯誤地計入分子或分母)
-        # 通常 InfoNCE 的分子是 Positives Set，分母是 Positives Set 之外的所有樣本
-        # 由於您明確要求分子是 Positives Set 且分母是 Negatives Set，我們需要清理對角線，確保 i 和 i+ 是互斥的。
-        
-        # 清理對角線 (i vs i)：InfoNCE 的分子/分母通常都不包含 i vs i
-        diag_mask = torch.diag(torch.ones(batch_size, device=x.device, dtype=torch.bool))
-        
-        # 確保對角線在分子和分母中都為 False
-        pos_mask = pos_mask & ~diag_mask 
-        # neg_mask = neg_mask & ~diag_mask 
-
-        # 6. 計算分子和分母總和
-        
-        # 分子 (Positive Sim Sum): Anchor i 對其 Positives Set 的總和
-        fp_sim = (sim_matrix * pos_mask).sum(dim=1) # (B,)
-        # random_indices = torch.randint(0, batch_size, (batch_size,), device=x.device)
-        # fp_sim = sim_matrix[range(batch_size), random_indices] # (B,)
-        
-        # 分母 (Negative Sim): 批次中剩餘的所有樣本 (Total - Random Pos)
-        # 由於 random_indices 可能是重複的，我們使用掩碼來保證正確的總和
-        
-        # 構建分母掩碼 (排除 Random Pos)
-        neg_mask = torch.ones((batch_size, batch_size), dtype=torch.bool, device=x.device)
-        # neg_mask[range(batch_size), random_indices] = False # 排除分子項
-        
-        neg_sim_sum = (sim_matrix * neg_mask).sum(dim=1) # (B,)
-        
-    else:
-        raise ValueError("Invalid mode. Must be 'sparse_neg' or 'random_pos'.")
-
-    # === 3. 損失計算 ===
-    loss = fp_sim / (neg_sim_sum + 1e-8)
-    loss = -torch.log(loss + 1e-8).mean()
-    
-    pos_sim_ = fp_sim.mean()
-    neg_sim_ = neg_sim_sum.mean()
-
-    return loss, pos_sim_, neg_sim_
-
 import random
 def setup_seed(seed):
 
@@ -1394,16 +869,17 @@ if __name__ == '__main__':
 
     dataset = TUDataset(path, name=DS, aug=args.aug, aug_ratio=aug_ratio).shuffle()
     dataset_eval = TUDataset(path, name=DS, aug='none').shuffle()
+    dataset_size = len(dataset)
     try:
         dataset_num_features = dataset.get_num_feature()
     except:
         dataset_num_features = 1
 
-    dataloader = DataLoader(dataset, batch_size=batch_size)
-    dataloader_eval = DataLoader(dataset_eval, batch_size=batch_size)
+    dataloader = DataLoader(dataset, batch_size=batch_size, num_workers=4, pin_memory=True)
+    dataloader_eval = DataLoader(dataset_eval, batch_size=batch_size, num_workers=4, pin_memory=True)
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model = simclr(args.hidden_dim, args.num_gc_layers, shuffle_DBN=args.shuffle_DBN, dataset_num_features=dataset_num_features).to(device)
+    model = simclr(args.hidden_dim, args.num_gc_layers, shuffle_DBN=args.shuffle_DBN, dataset_num_features=dataset_num_features, dataset_size=dataset_size).to(device)
     # print(model)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     
@@ -1635,7 +1111,7 @@ if __name__ == '__main__':
             
             node_num, _ = data.x.size()
             data = data.to(device)
-            x, _ = model(data.x, data.edge_index, data.batch, data.num_graphs)
+            x, _ = model(data.x, data.edge_index, data.batch)
 
             if args.aug == 'dnodes' or args.aug == 'subgraph' or args.aug == 'random2' or args.aug == 'random3' or args.aug == 'random4':
                 # node_num_aug, _ = data_aug.x.size()
@@ -1653,7 +1129,7 @@ if __name__ == '__main__':
 
             data_aug = data_aug.to(device)
 
-            x_aug, _ = model(data_aug.x, data_aug.edge_index, data_aug.batch, data_aug.num_graphs)
+            x_aug, _ = model(data_aug.x, data_aug.edge_index, data_aug.batch)
             if args.rotate == 'by_angle':
                 # x_aug = rotate_embedding_high_dim_by_angle(x, angle_degree=30.0, random_plane=True)
                 x_aug = rotate_embedding_targeted_angle(x, angle_degree=args.rotate_angle_deg)
@@ -1666,7 +1142,6 @@ if __name__ == '__main__':
                 all_labels.append(data.y.detach().cpu())
 
             # Assuming unified_loss is defined and handles all pos/neg strategies.
-            # Assuming model.loss_cal_reweighted and model.reweighted_l2_loss are defined for reweighted modes.
             if args.mode == 'normal':
                 # Standard InfoNCE (Self-Pos / All Negs)
                 if args.denominator_anchor:
@@ -1743,8 +1218,6 @@ if __name__ == '__main__':
             elif args.mode == 'reweighted':
                 loss, _, pos_sim, neg_sim = model.loss_cal_reweighted(x, x_aug)
 
-            elif args.mode == 'reweighted_l2':
-                loss, _, pos_sim, neg_sim = model.reweighted_l2_loss(x, x_aug)
             elif args.mode == 'reweighted_by_angle':
                 loss, pos_sim, neg_sim = model.reweighted_by_angle(x, x_aug, deg_boundary=args.rotate_angle_deg)
             elif args.mode == 'rm_FNs_by_ENs':
@@ -1768,21 +1241,69 @@ if __name__ == '__main__':
                     epoch_en_stats[f'Precision@{k}'] += en_stats.get(f'RBO_FN_Precision@{k}', 0)
                     epoch_en_stats[f'Recall@{k}'] += en_stats.get(f'RBO_FN_Recall@{k}', 0)
 
-                # epoch_en_stats['Recall@1'] += en_stats.get('Recall@1', 0)
-                # epoch_en_stats['Recall@5'] += en_stats.get('Recall@5', 0)
-                # epoch_en_stats['Recall@10'] += en_stats.get('Recall@10', 0)
-                # epoch_en_stats['mAP'] += en_stats.get('mAP', 0)
-
-                # 保留當前比例 (這通常隨 epoch 變動，batch 間相同)
-                # current_en_threshold_val = en_stats['curr_en_threshold']
             elif args.mode == 'reweight_FNs_by_RBO':
                 rbo_save_dir = f'{save_dir}/plot_RBO_weight/RBO_epoch_{epoch}'
                 os.makedirs(rbo_save_dir, exist_ok=True)
-                loss, coverage, en_stats = model.loss_cal_reweighted_FNs_by_RBO(x, x_aug, labels, neg_include_self=args.neg_include_self, 
+                
+                jaccard_sim = model.compute_geometry_jaccard_sim(data.to(device))
+                causal_sub_sim = model.compute_causal_subgraph_sim(data, model, device).to(device)
+                consensus_geo_sim = torch.sqrt(jaccard_sim * causal_sub_sim)
+
+                if epoch % 50 == 0:
+                    raw_cos_matrix = torch.mm(F.normalize(x, dim=1), F.normalize(x_aug, dim=1).T)
+                    sim_matrix = torch.exp(torch.mm(F.normalize(x, dim=1), F.normalize(x_aug, dim=1).T) / 0.2)
+                    # jaccard_sim = model.compute_geometry_jaccard_sim(data.to(device))
+                    # causal_sub_sim = model.compute_causal_subgraph_sim(data, model, device).to(device)
+                    # consensus_geo_sim = torch.sqrt(jaccard_sim * causal_sub_sim)
+
+                    all_matrices = {
+                        "Cosine": raw_cos_matrix,
+                        "Jaccard": jaccard_sim,
+                        "Causal": causal_sub_sim,
+                        "Consensus": consensus_geo_sim
+                    }
+
+                    analysis_pool = {**all_matrices}
+                    for name, mtx in all_matrices.items():
+                        # 對每一種幾何指標都算一次 RBO Coverage
+                        cov, _ = model.identify_fn_by_rbo_coverage(mtx, labels, p=args.RBO_p)
+                        analysis_pool[f"RBO_{name}"] = cov
+
+                    matrix_plot_dir = f"{rbo_save_dir}/all_pairs_diagnosis"
+                    os.makedirs(matrix_plot_dir, exist_ok=True)
+                    
+                    keys = list(analysis_pool.keys())
+                    for i in range(len(keys)):
+                        for j in range(i + 1, len(keys)):
+                            name_x = keys[i]
+                            name_y = keys[j]
+                            mtx_x = analysis_pool[name_x]
+                            mtx_y = analysis_pool[name_y]
+                            
+                            # A. 計算相關性指標 (Alignment)
+                            mask = ~torch.eye(labels.size(0), device=device).bool()
+                            correlation = torch.corrcoef(torch.stack([mtx_x[mask], mtx_y[mask]]))[0, 1]
+                            writer.add_scalar(f"Alignment/{name_x}_vs_{name_y}", correlation.item(), epoch)
+                            
+                            # B. 繪製診斷圖 (X 軸為 name_x, Y 軸為 name_y)
+                            # 建立子目錄避免檔案太亂
+                            pair_save_dir = f"{matrix_plot_dir}/{name_x}_vs_{name_y}"
+                            os.makedirs(pair_save_dir, exist_ok=True)
+                            
+                            # 調用妳原本的繪圖函數
+                            plot_rbo_cosine_diagnosis(
+                                sim_matrix=mtx_x,  # X 軸指標
+                                coverage=mtx_y,    # Y 軸指標
+                                labels=labels,
+                                epoch=epoch,
+                                save_dir=pair_save_dir
+                            )
+
+                loss, coverage, en_stats = model.loss_cal_reweighted_FNs_by_RBO(x, x_aug, labels, batch_indices=data.idx.to(device), neg_include_self=args.neg_include_self, 
                                                                                 reweight_strategy=args.reweight_strategy, coverage_threshold=args.coverage_threshold, 
                                                                                 renormalization=args.renormalization, RBO_anchor=args.RBO_anchor,
                                                                                 denominator_anchor=args.denominator_anchor, RBO_p=args.RBO_p,
-                                                                                RBO_save_path=rbo_save_dir, boost_factor=args.tn_weight)
+                                                                                RBO_save_path=rbo_save_dir, boost_factor=args.tn_weight, cur_epoch=epoch, geo_sim_matrix=consensus_geo_sim)
                 epoch_en_stats['soft_pFN_recall'] += en_stats['soft_pFN_recall']
                 epoch_en_stats['soft_pFN_precision'] += en_stats['soft_pFN_precision']
                 epoch_en_stats['soft_pFN_f1'] += en_stats['soft_pFN_f1']
