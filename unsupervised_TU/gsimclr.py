@@ -134,59 +134,62 @@ class simclr(nn.Module):
         
         return stretched_coverage, stats
   
-  def loss_cal_structural_PPR_infonce(self, x, x_aug, labels, T=0.2, alpha_ppr=0.8, gamma=3.0):
+  def loss_cal_MSE_infonce(self, x, x_aug, labels, data, T=0.2, alpha_ppr=0.8, gamma=3.0, lambda_align=1.0):
+        '''PPR(Jaccard*cosine), loss = Infonce+MSE(Alignment) with Focal Weighting, alignment only consider samples with confidence > 0.3 to avoid noise
+        '''
         batch_size = x.size(0)
         device = x.device
         diag_mask = torch.eye(batch_size, device=device).bool()
-
-        # --- A. 核心邏輯 (PPR -> Target -> Suppression) ---
         cos_sim = torch.mm(F.normalize(x, dim=1), F.normalize(x_aug, dim=1).T)
-        # jaccard_mtx = compute_geometry_jaccard_sim(data)
-        # jaccard_mtx = compute_adamic_adar_sim(jaccard_mtx)
+        jaccard_mtx = compute_geometry_jaccard_sim(data)
         
-        # PPR 擴散 (作為 Target)
-        W = cos_sim.clone()
-
-        # W[W < 0.2] = 0.0 
+        cos_sim_clipped = torch.clamp(cos_sim.detach(), min=0.0)
+        W = cos_sim_clipped * jaccard_mtx
+        
+        W[W < 0.2] = 0.0 # why filtering
+        
+        # PPR
         D_inv = torch.diag(1.0 / (W.sum(dim=1) + 1e-8))
         P = torch.mm(D_inv, W)
-        Target = torch.eye(batch_size, device=device)
+        target_ppr = torch.eye(batch_size, device=device)
         for _ in range(3):
-            Target = alpha_ppr * torch.eye(batch_size, device=device) + (1 - alpha_ppr) * torch.mm(P, Target)
-        # target f1, precision, recall before norm
+            target_ppr = alpha_ppr * torch.eye(batch_size, device=device) + (1 - alpha_ppr) * torch.mm(P, target_ppr)
+        
+        t_norm = (target_ppr - target_ppr.min()) / (target_ppr.max() - target_ppr.min() + 1e-8)
+        fn_confidence = torch.sigmoid((t_norm - 0.5) * 10.0) # 強行讓 0.5 以上的快速接近 1
+        fn_confidence = fn_confidence.masked_fill(diag_mask, 0.0)
 
-        t_min, t_max = Target.min(), Target.max()
-        Target = (Target - t_min) / (t_max - t_min + 1e-8)
-        Target = Target.masked_fill(diag_mask, 0.0)
-
-        # Focal Gap 計算 (作為 Suppression)
-        # 強烈建議在計算 Focal 之前加入這行
-        # modified
-        cos_sim_norm = (cos_sim - cos_sim.min()) / (cos_sim.max() - cos_sim.min() + 1e-8)
-        # gap = torch.relu(Target - cos_sim_norm)
-        fn_confidence = Target * cos_sim_norm
-        suppression = torch.pow(1.0 - fn_confidence, gamma)
-        suppression = torch.clamp(suppression, min=0.01)
-        # --- B. 計算六條線的數據 (Soft Metrics) ---
         labels_col = labels.view(-1, 1)
         gt_mask = labels_col.eq(labels_col.T).float().masked_fill(diag_mask, 0.0)
-
-        # 1-3. Target 的 P, R, F1
-        t_p, t_r, t_f1 = get_soft_metrics(Target, gt_mask)
-        s_p, s_r, s_f1 = get_soft_metrics(1-suppression, gt_mask)
         
-        # --- C. InfoNCE Loss ---
+        # 只要 fn_confidence > 0.5 且標籤正確，就算救援成功
+        is_fn_candidate = (gt_mask > 0.5).float()
+        is_rescued = (fn_confidence > 0.5).float()
+        rescue_rate = (is_rescued * is_fn_candidate).sum() / (is_fn_candidate.sum() + 1e-8)
+
+        # 6. Loss 
+        # (A) InfoNCE w/o reweight
         exp_sim = torch.exp(cos_sim / T)
-        weighted_neg_sim = exp_sim * suppression
-        neg_denom = weighted_neg_sim.masked_fill(diag_mask, 0.0).sum(dim=1)
-        loss = -torch.log(exp_sim.diag() / (neg_denom + 1e-8) + 1e-8).mean()
+        neg_denom = exp_sim.masked_fill(diag_mask, 0.0).sum(dim=1)
+        loss_infonce = -torch.log(exp_sim.diag() / (neg_denom + 1e-8) + 1e-8).mean()
+
+        # (B) Alignment Loss (MSE) - 主動拉回高信心 FN
+        # 這裡我們加上 Focal 的權重邏輯：信心越高，拉力越強
+        # 我們只對 fn_confidence > 0.3 的樣本計算拉力，避免雜訊
+        align_mask = (fn_confidence > 0.3).float()
+        loss_align = F.mse_loss(cos_sim * align_mask, torch.ones_like(cos_sim) * align_mask)
+
+        # 7. 最終混合
+        total_loss = loss_infonce + lambda_align * loss_align
 
         stats = {
-            't_p': t_p, 't_r': t_r, 't_f1': t_f1,
-            's_p': s_p, 's_r': s_r, 's_f1': s_f1
+            'infonce_loss': loss_infonce.item(),
+            'align_loss': loss_align.item(),
+            'FN_Rescue_Rate': rescue_rate.item(),
+            'avg_confidence': fn_confidence[gt_mask.bool()].mean().item() if gt_mask.any() else 0
         }
         
-        return loss, Target, stats
+        return total_loss, fn_confidence, stats
 
   def loss_cal_structural_focal_infonce(self, x, x_aug, labels, T=0.2, alpha_ppr=0.8, gamma=3.0):
         batch_size = x.size(0)
@@ -442,6 +445,8 @@ if __name__ == '__main__':
             epoch_metrics = {k: 0.0 for k in ['t_p', 't_r', 't_f1', 's_p', 's_r', 's_f1']}
         if args.mode == 'PPR_infonce_oracle':
             epoch_metrics = {k: 0.0 for k in ['FN_Rescue_Rate', 'HN_Leakage_Rate', 'Avg_Supp_FN', 'Avg_Supp_HN', 'Target_F1']}
+        if args.mode == 'MSE_infonce':
+            epoch_metrics = {k: 0.0 for k in ['infonce_loss', 'align_loss', 'FN_Rescue_Rate', 'avg_confidence']}
 
     # for epoch in range(start_epoch, epochs + 1):
         # lr = scheduler.step()
@@ -619,8 +624,8 @@ if __name__ == '__main__':
                 loss, _, stats = model.loss_cal_structural_focal_infonce(x, x_aug, labels)
                 for k in epoch_metrics:
                     epoch_metrics[k] += stats[k]
-            elif args.mode == 'PPR_infonce':
-                loss, _, stats = model.loss_cal_structural_PPR_infonce(x, x_aug, labels)
+            elif args.mode == 'MSE_infonce':
+                loss, _, stats = model.loss_cal_MSE_infonce(x, x_aug, labels, data)
                 for k in epoch_metrics:
                     epoch_metrics[k] += stats[k]
             elif args.mode == 'PPR_infonce_oracle':
@@ -641,7 +646,7 @@ if __name__ == '__main__':
 
         # tensorboard
         writer.add_scalar('Loss/train', loss_all / len(dataloader.dataset), epoch)
-        if args.mode == 'focal_infonce' or args.mode == 'PPR_infonce' or args.mode == 'PPR_infonce_oracle':
+        if args.mode == 'focal_infonce' or args.mode == 'MSE_infonce' or args.mode == 'PPR_infonce_oracle':
             num_batches = len(dataloader)
             for k in epoch_metrics:
                 writer.add_scalar(f'Metric_Group/{k}', epoch_metrics[k] / num_batches, epoch)
