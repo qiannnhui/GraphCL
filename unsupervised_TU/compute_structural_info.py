@@ -21,15 +21,16 @@ def compute_adamic_adar_sim(adj_matrix):
         
         return aa_norm
 
-def compute_geometry_jaccard_sim(self, data, max_deg=20):
+def compute_geometry_jaccard_sim(data, max_deg=20):
         edge_index = data.edge_index
         batch = data.batch
         num_graphs = data.num_graphs
+        device = batch.device
         deg = degree(edge_index[0], dtype=torch.long)
         deg_clamped = deg.clamp(max=max_deg)
         deg_onehot = F.one_hot(deg_clamped, num_classes=max_deg + 1).float()
         
-        graph_hist = torch.zeros((num_graphs, max_deg + 1), device=data.device)
+        graph_hist = torch.zeros((num_graphs, max_deg + 1), device=device)
         graph_hist.scatter_add_(0, batch.view(-1, 1).expand(-1, max_deg + 1), deg_onehot)
 
         A = graph_hist.unsqueeze(1) 
@@ -57,7 +58,7 @@ def compute_structural_consensus_metrics(data, alpha=0.15, ppr_steps=10, heat_t=
         num_nodes = data.num_nodes
         batch = data.batch # 標記每個節點屬於哪張圖 [N]
         num_graphs = data.num_graphs
-        device = data.device
+        device = batch.device
 
         # --- 1. 譜域預處理：計算歸一化係數 ---
         row, col = edge_index
