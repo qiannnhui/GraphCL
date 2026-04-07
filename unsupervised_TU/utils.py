@@ -1,6 +1,32 @@
 import torch
 import torch.nn.functional as F
 
+def get_soft_metrics(pred_mtx, gt_mtx):
+    '''Compute soft Precision, Recall, F1 based on continuous predictions and binary ground truth'''
+    batch_size = pred_mtx.size(0)
+    device = pred_mtx.device
+    diag_mask = torch.eye(batch_size, dtype=torch.bool, device=device)
+    tp = torch.sum(pred_mtx * gt_mtx)
+    fp = torch.sum(pred_mtx * (1 - gt_mtx).masked_fill(diag_mask, 0.0))
+    fn = torch.sum((1 - pred_mtx).masked_fill(diag_mask, 0.0) * gt_mtx)
+    p = tp / (tp + fp + 1e-8)
+    r = tp / (tp + fn + 1e-8)
+    f1 = 2 * p * r / (p + r + 1e-8)
+    return p.item(), r.item(), f1.item()
+
+def compute_pairwise_differences(metrics_dict):
+    """
+    計算字典中所有矩陣指標兩兩之間的絕對差值
+    """
+    import itertools
+    diff_results = {}
+    metric_names = list(metrics_dict.keys())
+    for name_a, name_b in itertools.combinations(metric_names, 2):
+        diff_mat = torch.abs(metrics_dict[name_a] - metrics_dict[name_b])
+        diff_results[f'Diff_({name_a}_vs_{name_b})'] = diff_mat
+        
+    return diff_results
+
 def create_pos_and_neg_mask(labels):
 
     labels = labels.view(-1, 1)
