@@ -242,6 +242,93 @@ class simclr(nn.Module):
         }
         
         return loss, Target, stats
+  
+  def loss_cal_structural_PPR_infonce_oracle(self, x, x_aug, labels, data, T=0.2, alpha_ppr=0.8, gamma=5.0, high_sim_threshold=0.8):
+        batch_size = x.size(0)
+        device = x.device
+        diag_mask = torch.eye(batch_size, device=device).bool()
+
+        cos_sim = torch.mm(F.normalize(x, dim=1), F.normalize(x_aug, dim=1).T)
+        jaccard_mtx = compute_geometry_jaccard_sim(data)
+        
+        W = jaccard_mtx.clone()
+        W[W < 0.2] = 0.0 
+        D_inv = torch.diag(1.0 / (W.sum(dim=1) + 1e-8))
+        P = torch.mm(D_inv, W)
+        Target_ppr = torch.eye(batch_size, device=device)
+        for _ in range(3):
+            Target_ppr = alpha_ppr * torch.eye(batch_size, device=device) + (1 - alpha_ppr) * torch.mm(P, Target_ppr)
+        
+        Target_ppr = (Target_ppr - Target_ppr.min()) / (Target_ppr.max() - Target_ppr.min() + 1e-8)
+
+        # B. 【核心修改 1】利用 Label 定義「作弊版」FN Confidence
+        labels_col = labels.view(-1, 1)
+        gt_mask = labels_col.eq(labels_col.T).float().masked_fill(diag_mask, 0.0)
+        
+        # 強行拉開 Cosine 動態範圍
+        cos_sim_norm = (cos_sim - cos_sim.min()) / (cos_sim.max() - cos_sim.min() + 1e-8)
+        
+        # 定義高壓區 (原本會被重推的地方)
+        high_sim_mask = (cos_sim > high_sim_threshold).float().masked_fill(diag_mask, 0.0)
+        
+        # 關鍵 FN：真的是同類 (gt) 且 模型覺得很像 (high_sim)
+        critical_fn_mask = gt_mask * high_sim_mask
+        
+        # 我們將 PPR 的預測與 GT 結合：
+        # 如果是 Critical FN，信心值強制設為 Target_ppr 與 gt 的結合 (這裡可以根據妳想看 labels 的程度調整)
+        # 這裡我們用 GT 導向：只要是 GT_Pos 且 Cos 高，我就認定它是 FN
+        # fn_confidence = critical_fn_mask * Target_ppr 
+        predicted_fn_confidence = Target_ppr * cos_sim_norm
+        predicted_suppression = torch.pow(1.0 - predicted_fn_confidence, gamma)
+        predicted_suppression = torch.clamp(predicted_suppression, min=0.01)
+        fn_confidence = critical_fn_mask
+        
+        # C. 計算 Suppression (煞車權重)
+        # 只有在 fn_confidence 高的地方，suppression 才會變小 (趨近 0)
+        suppression = torch.pow(1.0 - fn_confidence, gamma)
+        suppression = torch.clamp(suppression, min=0.01)
+
+        # D. 【核心修改 2】重寫指標邏輯：局部救援評估
+        # 我們只關心：在那群「原本會被推開的同類 (critical_fn)」中，我們救了多少？
+        
+        def get_rescue_metrics(supp_mtx, crit_mask, hn_mask):
+            # 救援成功：權重被壓低了 (例如 < 0.5)
+            is_rescued = (supp_mtx < 0.5).float()
+            
+            # FN 救援率 (Survival Rate)
+            num_crit = crit_mask.sum() + 1e-8
+            rescue_rate = (is_rescued * crit_mask).sum() / num_crit
+            
+            # HN 誤救率 (Leakage Rate)：本來該推開的異類，卻被妳當成好人救了
+            num_hn = hn_mask.sum() + 1e-8
+            leakage_rate = (is_rescued * hn_mask).sum() / num_hn
+            
+            # 平均推力對比
+            avg_fn_push = (supp_mtx * crit_mask).sum() / num_crit
+            avg_hn_push = (supp_mtx * hn_mask).sum() / num_hn
+            
+            return rescue_rate.item(), leakage_rate.item(), avg_fn_push.item(), avg_hn_push.item()
+
+        # 這裡的 HN 定義為：Cosine 很高但標籤不同
+        true_hn_mask = (1.0 - gt_mask) * high_sim_mask
+        
+        r_rate, l_rate, fn_push, hn_push = get_rescue_metrics(predicted_suppression, critical_fn_mask, true_hn_mask)
+
+        # E. InfoNCE Loss
+        exp_sim = torch.exp(cos_sim / T)
+        weighted_neg_sim = exp_sim * suppression
+        neg_denom = weighted_neg_sim.masked_fill(diag_mask, 0.0).sum(dim=1)
+        loss = -torch.log(exp_sim.diag() / (neg_denom + 1e-8) + 1e-8).mean()
+
+        stats = {
+            'FN_Rescue_Rate': r_rate,      # 越高越好 (救到好人)
+            'HN_Leakage_Rate': l_rate,     # 越低越好 (沒救錯壞人)
+            'Avg_Supp_FN': fn_push,        # 越低越好 (煞車踩多死)
+            'Avg_Supp_HN': hn_push,        # 應該接近 1 (壞人要照樣推)
+            'Target_F1': get_soft_metrics(Target_ppr, gt_mask)[2] # 保留原本的 Target 品質參考
+        }
+        
+        return loss, Target_ppr, stats
 
 
   def loss_cal_reweighted_FNs_by_RBO(self, x, x_aug, labels, geo_sim_matrix, causal_sim_matrix, cur_epoch, total_epochs):
@@ -351,7 +438,7 @@ if __name__ == '__main__':
     """
 
     for epoch in range(0, epochs + 1):
-        if args.mode == 'focal_infonce' or args.mode == 'PPR_infonce':
+        if args.mode == 'focal_infonce' or args.mode == 'PPR_infonce' or args.mode == 'PPR_infonce_oracle':
             epoch_metrics = {k: 0.0 for k in ['t_p', 't_r', 't_f1', 's_p', 's_r', 's_f1']}
 
     # for epoch in range(start_epoch, epochs + 1):
@@ -534,6 +621,10 @@ if __name__ == '__main__':
                 loss, _, stats = model.loss_cal_structural_PPR_infonce(x, x_aug, labels)
                 for k in epoch_metrics:
                     epoch_metrics[k] += stats[k]
+            elif args.mode == 'PPR_infonce_oracle':
+                loss, _, stats = model.loss_cal_structural_PPR_infonce_oracle(x, x_aug, labels, data)
+                for k in epoch_metrics:
+                    epoch_metrics[k] += stats[k]
 
             else:
                 # Handles all other unmatched modes
@@ -548,7 +639,7 @@ if __name__ == '__main__':
 
         # tensorboard
         writer.add_scalar('Loss/train', loss_all / len(dataloader.dataset), epoch)
-        if args.mode == 'focal_infonce' or args.mode == 'PPR_infonce':
+        if args.mode == 'focal_infonce' or args.mode == 'PPR_infonce' or args.mode == 'PPR_infonce_oracle':
             num_batches = len(dataloader)
             for k in epoch_metrics:
                 writer.add_scalar(f'Metric_Group/{k}', epoch_metrics[k] / num_batches, epoch)
