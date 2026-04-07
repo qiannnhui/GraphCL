@@ -438,8 +438,10 @@ if __name__ == '__main__':
     """
 
     for epoch in range(0, epochs + 1):
-        if args.mode == 'focal_infonce' or args.mode == 'PPR_infonce' or args.mode == 'PPR_infonce_oracle':
+        if args.mode == 'focal_infonce' or args.mode == 'PPR_infonce':
             epoch_metrics = {k: 0.0 for k in ['t_p', 't_r', 't_f1', 's_p', 's_r', 's_f1']}
+        if args.mode == 'PPR_infonce_oracle':
+            epoch_metrics = {k: 0.0 for k in ['FN_Rescue_Rate', 'HN_Leakage_Rate', 'Avg_Supp_FN', 'Avg_Supp_HN', 'Target_F1']}
 
     # for epoch in range(start_epoch, epochs + 1):
         # lr = scheduler.step()
