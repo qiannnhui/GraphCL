@@ -141,13 +141,13 @@ class simclr(nn.Module):
 
         # --- A. 核心邏輯 (PPR -> Target -> Suppression) ---
         cos_sim = torch.mm(F.normalize(x, dim=1), F.normalize(x_aug, dim=1).T)
-        jaccard_mtx = compute_geometry_jaccard_sim(data)
-        jaccard_mtx = compute_adamic_adar_sim(jaccard_mtx)
+        # jaccard_mtx = compute_geometry_jaccard_sim(data)
+        # jaccard_mtx = compute_adamic_adar_sim(jaccard_mtx)
         
         # PPR 擴散 (作為 Target)
-        W = jaccard_mtx.clone()
+        W = cos_sim.clone()
 
-        W[W < 0.2] = 0.0 
+        # W[W < 0.2] = 0.0 
         D_inv = torch.diag(1.0 / (W.sum(dim=1) + 1e-8))
         P = torch.mm(D_inv, W)
         Target = torch.eye(batch_size, device=device)
