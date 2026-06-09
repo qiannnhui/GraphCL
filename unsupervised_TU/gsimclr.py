@@ -35,6 +35,7 @@ from save_load_ckpts import load_checkpoint, save_checkpoint # 引入檢查點�
 from unified_loss import unified_loss, get_pair_angles, flexible_hard_mining_loss
 from utils import get_soft_metrics, compute_pairwise_differences
 from compute_structural_info import compute_adamic_adar_sim, compute_structural_consensus_metrics, compute_geometry_jaccard_sim
+from torch_geometric.utils import to_dense_batch
 import random
 
 def setup_seed(seed):
@@ -59,6 +60,7 @@ class simclr(nn.Module):
         nn.ReLU(inplace=True), 
         nn.Linear(self.embedding_dim, self.embedding_dim)
     )
+    self.slot_attention = SlotAttention(num_slots=2, dim=self.embedding_dim)
     self.init_emb()
     self.register_buffer('rbo_consistency_count', torch.zeros(dataset_size, dataset_size, dtype=torch.int32))
 
@@ -71,14 +73,78 @@ class simclr(nn.Module):
 
   def forward(self, x, edge_index, batch):
     if x is None:
-        x = torch.ones(batch.shape[0]).to(device)
+        x = torch.ones(batch.shape[0]).to(self.device)
 
     y, M = self.encoder(x, edge_index, batch)
     
     y = self.proj_head(y)
     
-    return y, M
+    M_dense, mask = to_dense_batch(M, batch)
+    slots, attn = self.slot_attention(M_dense, mask=mask)
+    S0 = slots[:, 0, :]
+    S1 = slots[:, 1, :]
+    
+    return y, M, S0, S1, attn, mask
   
+  def loss_cal_slot_causal_infonce(self, x, x_aug, labels, S0, S0_aug, attn, mask):
+        T = 0.2
+        batch_size = x.size(0)
+        device = x.device
+        diag_mask = torch.eye(batch_size, device=device).bool()
+        
+        cos_sim = torch.mm(F.normalize(x, dim=1), F.normalize(x_aug, dim=1).T)
+        S0_sim = torch.mm(F.normalize(S0, dim=1), F.normalize(S0_aug, dim=1).T)
+        
+        # 1. KL loss (cls)
+        y_sim_kl = torch.mm(F.normalize(x, dim=1), F.normalize(x, dim=1).T) / T
+        S0_sim_kl = torch.mm(F.normalize(S0, dim=1), F.normalize(S0, dim=1).T) / T
+        y_prob = F.softmax(y_sim_kl.detach(), dim=1)
+        S0_logprob = F.log_softmax(S0_sim_kl, dim=1)
+        loss_cls = F.kl_div(S0_logprob, y_prob, reduction='batchmean')
+        
+        # 2. Sparse loss
+        attn_S0 = attn[:, 0, :]
+        loss_sparse = (attn_S0 * mask).sum(dim=1).mean()
+        
+        # 3. FN Identification and reweighting
+        fn_confidence = S0_sim.detach()
+        c_min, c_max = fn_confidence.min(), fn_confidence.max()
+        fn_confidence = (fn_confidence - c_min) / (c_max - c_min + 1e-8) if c_max > c_min else fn_confidence
+        
+        gap = torch.relu(fn_confidence - cos_sim)
+        reweight_factors = 1.0 + fn_confidence * (gap ** 2) * 20.0
+        
+        exp_sim = torch.exp(cos_sim / T)
+        weighted_sim = exp_sim * reweight_factors
+        weighted_sim.masked_fill_(diag_mask, 0.0)
+        
+        loss_infonce = -torch.log(exp_sim.diag() / (weighted_sim.sum(dim=1) + 1e-8) + 1e-8).mean()
+        
+        total_loss = loss_infonce + loss_cls + 0.1 * loss_sparse
+        
+        labels_col = labels.view(-1, 1)
+        gt_fn_mask = (labels_col.eq(labels_col.T) & ~diag_mask).float() 
+        gt_tn_mask = (~labels_col.eq(labels_col.T) & ~diag_mask).float() 
+        
+        soft_tp = torch.sum(fn_confidence * gt_fn_mask)
+        soft_fp = torch.sum(fn_confidence * gt_tn_mask)
+        soft_fn = torch.sum((1 - fn_confidence) * gt_fn_mask)
+
+        soft_pFN_recall = (soft_tp / (soft_tp + soft_fn + 1e-8)).item()
+        soft_pFN_precision = (soft_tp / (soft_tp + soft_fp + 1e-8)).item()
+        soft_pFN_f1 = 2 * soft_pFN_precision * soft_pFN_recall / (soft_pFN_precision + soft_pFN_recall + 1e-8)
+        
+        stats = {
+            'infonce_loss': loss_infonce.item(),
+            'loss_cls': loss_cls.item(),
+            'loss_sparse': loss_sparse.item(),
+            'precision': soft_pFN_precision,
+            'recall': soft_pFN_recall,
+            'f1': soft_pFN_f1
+        }
+        
+        return total_loss, fn_confidence, stats
+
   def identify_fn_by_rbo_coverage(self, sim_matrix, labels, p=0.98, depth=50):
         batch_size = sim_matrix.size(0)
         device = sim_matrix.device
@@ -426,12 +492,14 @@ if __name__ == '__main__':
     """
 
     for epoch in range(0, epochs + 1):
-        if args.mode == 'reweight_random_FN':
+        if args.mode in ['reweight_random_FN', 'slot_causal_infonce']:
             epoch_metrics = {'precision': 0.0, 'recall': 0.0, 'f1': 0.0}
         if args.mode == 'focal_infonce' or args.mode == 'PPR_infonce':
             epoch_metrics = {k: 0.0 for k in ['t_p', 't_r', 't_f1', 's_p', 's_r', 's_f1']}
         if args.mode == 'PPR_infonce_oracle':
             epoch_metrics = {k: 0.0 for k in ['FN_Rescue_Rate', 'HN_Leakage_Rate', 'Avg_Supp_FN', 'Avg_Supp_HN', 'Target_F1']}
+        if args.mode == 'slot_causal_infonce':
+            epoch_metrics = {k: 0.0 for k in ['precision', 'recall', 'f1', 'infonce_loss', 'loss_cls', 'loss_sparse']}
         if args.mode == 'MSE_infonce':
             epoch_metrics = {k: 0.0 for k in ['infonce_loss', 'align_loss', 'FN_Rescue_Rate', 'avg_confidence']}
 
@@ -502,7 +570,7 @@ if __name__ == '__main__':
             
             node_num, _ = data.x.size()
             data = data.to(device)
-            x, _ = model(data.x, data.edge_index, data.batch)
+            x, M, S0, S1, attn, mask = model(data.x, data.edge_index, data.batch)
 
             if args.aug == 'dnodes' or args.aug == 'subgraph' or args.aug == 'random2' or args.aug == 'random3' or args.aug == 'random4':
                 edge_idx = data_aug.edge_index.numpy()
@@ -524,7 +592,7 @@ if __name__ == '__main__':
 
             data_aug = data_aug.to(device)
 
-            x_aug, _ = model(data_aug.x, data_aug.edge_index, data_aug.batch)
+            x_aug, M_aug, S0_aug, S1_aug, attn_aug, mask_aug = model(data_aug.x, data_aug.edge_index, data_aug.batch)
 
             # Assuming unified_loss is defined and handles all pos/neg strategies.
             if args.mode == 'normal':
@@ -615,7 +683,7 @@ if __name__ == '__main__':
                 loss, _, stats = model.loss_cal_structural_focal_infonce(x, x_aug, labels)
                 for k in epoch_metrics:
                     epoch_metrics[k] += stats[k]
-            elif args.mode == 'reweight_random_FN':
+            elif args.mode in ['reweight_random_FN', 'slot_causal_infonce']:
                 loss, pos_sim, neg_sim, fn_metrics = unified_loss(
                     x, x_aug, labels, 
                     pos_strategy='normal', 
@@ -627,6 +695,10 @@ if __name__ == '__main__':
                 epoch_metrics['precision'] += fn_metrics.get('precision', 0)
                 epoch_metrics['recall'] += fn_metrics.get('recall', 0)
                 epoch_metrics['f1'] += fn_metrics.get('f1', 0)
+            elif args.mode == 'slot_causal_infonce':
+                loss, fn_confidence, stats = model.loss_cal_slot_causal_infonce(x, x_aug, labels, S0, S0_aug, attn, mask)
+                for k in stats:
+                    epoch_metrics[k] += stats[k]
             elif args.mode == 'MSE_infonce':
                 loss, _, stats = model.loss_cal_MSE_infonce(x, x_aug, labels, data)
                 for k in epoch_metrics:
@@ -649,7 +721,7 @@ if __name__ == '__main__':
 
         # tensorboard
         writer.add_scalar('Loss/train', loss_all / len(dataloader.dataset), epoch)
-        if args.mode == 'focal_infonce' or args.mode == 'MSE_infonce' or args.mode == 'PPR_infonce_oracle':
+        if args.mode == 'focal_infonce' or args.mode == 'MSE_infonce' or args.mode == 'PPR_infonce_oracle' or args.mode == 'slot_causal_infonce':
             num_batches = len(dataloader)
             for k in epoch_metrics:
                 writer.add_scalar(f'Metric_Group/{k}', epoch_metrics[k] / num_batches, epoch)
@@ -667,7 +739,7 @@ if __name__ == '__main__':
             #     writer.add_scalar(f'Singular_Values/{epoch}_{args.DS}', np.log10(value), i)
             if acc_val > best_val_acc:
                 best_val_acc = acc_val
-                if args.mode == 'reweight_random_FN':
+                if args.mode in ['reweight_random_FN', 'slot_causal_infonce']:
                     num_batches = len(dataloader)
                     best_fn_metrics = {k: v / num_batches for k, v in epoch_metrics.items()}
                 best_epoch = epoch
@@ -692,7 +764,7 @@ if __name__ == '__main__':
         f.write('{},{},{},{},{},{},{},{}\n'.format(args.DS, args.num_gc_layers, epochs, log_interval, lr, s1, s2, s3))
     
     print(f'BEST_VAL_ACC={best_val_acc}')
-    if args.mode == 'reweight_random_FN':
+    if args.mode in ['reweight_random_FN', 'slot_causal_infonce']:
         try:
             print(f'BEST_FN_METRICS={json.dumps(best_fn_metrics)}')
         except:

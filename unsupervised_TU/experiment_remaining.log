@@ -224,4 +224,5 @@ Dataset: DD
   → normal  ACC Mean: 0.7784 ± 0.0034
 
   ▶ Group B (reweight_random_FN)
-    [DD] reweight_random_FN seed=0  ... 
+    [DD] reweight_random_FN seed=0  ... val_acc=0.7802, pFN prec=0.5134
+    [DD] reweight_random_FN seed=1  ... 
