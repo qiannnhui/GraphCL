@@ -160,7 +160,8 @@ def unified_loss(x: torch.Tensor, x_aug: torch.Tensor, labels: torch.Tensor, T: 
                      pos_num_samples: int = 10,
                      neg_num_samples: int = 10,
                      neg_include_self: bool = False,
-                     tn_weight: float = 1.0):
+                     tn_weight: float = 1.0,
+                     drop_p: float = 0.5):
     
     device = x.device
     sim_matrix = get_similarity_matrix(x=x, x_aug=x_aug, similarity_measure=sim_measure, T=T)
@@ -263,6 +264,26 @@ def unified_loss(x: torch.Tensor, x_aug: torch.Tensor, labels: torch.Tensor, T: 
     #     total_tp_counts = TP_mask.sum(dim=1)
     #     N_sum_sample = (sim_matrix * tp_mask_sample).sum(dim=1)
     #     N_sum = (N_sum_sample / actual_sampled_counts) * total_tp_counts
+
+    elif neg_strategy == 'random_drop_fn':
+        keep_mask = (torch.rand(TP_mask.shape, device=device) >= drop_p)
+        N_sum = (sim_matrix * TN_mask * keep_mask).sum(dim=1) + (sim_matrix * TP_mask * keep_mask).sum(dim=1)
+        
+        dropped = ~keep_mask & (TN_mask | TP_mask)
+        tp_drops = (dropped & TP_mask).sum().float()
+        total_drops = dropped.sum().float()
+        total_fns = TP_mask.sum().float()
+        
+        precision = (tp_drops / total_drops).item() if total_drops > 0 else 0.0
+        recall = (tp_drops / total_fns).item() if total_fns > 0 else 0.0
+        f1 = 2 * precision * recall / (precision + recall + 1e-8)
+        
+        loss = P_term / (N_sum + 1e-8)
+        loss = -torch.log(loss + 1e-8).mean()
+        
+        pos_sim = P_term.mean()
+        neg_sim = N_sum.mean()
+        return loss, pos_sim, neg_sim, {'precision': precision, 'recall': recall, 'f1': f1}
 
     else:
         # Default case for error handling

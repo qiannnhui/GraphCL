@@ -405,20 +405,3 @@ def mask_nodes(data, aug_ratio=0.1):
     data.x[idx_mask] = torch.tensor(np.random.normal(loc=0.5, scale=0.5, size=(mask_num, feat_dim)), dtype=torch.float32)
 
     return data
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

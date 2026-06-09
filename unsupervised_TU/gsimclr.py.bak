@@ -28,8 +28,8 @@ from check_dim_collapse import check_dimensional_collapse
 from ortho_loss import l2_reg_ortho
 from torch.utils.tensorboard import SummaryWriter
 import time
-# from utils_plot.plot_parallel_and_radar_online import plot_advanced_diagnosis
-# from utils_plot.plot_3D_online_scatter import plot_3d_interactive_diagnosis
+from utils_plot.plot_parallel_and_radar_online import plot_advanced_diagnosis
+from utils_plot.plot_3D_online_scatter import plot_3d_interactive_diagnosis
 from make_save_dir import make_save_dir # 引入創建儲存目錄的函數
 from save_load_ckpts import load_checkpoint, save_checkpoint # 引入檢查點函數
 from unified_loss import unified_loss, get_pair_angles, flexible_hard_mining_loss
@@ -372,7 +372,6 @@ if __name__ == '__main__':
     os.makedirs(f'{save_dir}', exist_ok=True)
     ckpt_filename = f'{save_dir}/ckpts.pth.tar'
     best_val_acc = 0.0
-    best_fn_metrics = {}
     # tensorboard
     writer = SummaryWriter(log_dir=f'{save_dir}/tensorboard_{time.ctime(time.time())}_{args.or_loss}')
 
@@ -406,8 +405,24 @@ if __name__ == '__main__':
     model = simclr(args.hidden_dim, args.num_gc_layers, shuffle_DBN=args.shuffle_DBN, dataset_num_features=dataset_num_features, dataset_size=dataset_size).to(device)
     # print(model)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    global_jaccard_matrix = None
-    tmp_loader = DataLoader(dataset_eval, batch_size=batch_size, shuffle=False)
+    tmp_loader = DataLoader(dataset_eval, batch_size=len(dataset_eval), shuffle=False)
+    batch_all = next(iter(tmp_loader))
+
+    if isinstance(batch_all, list) or isinstance(batch_all, tuple):
+        raw_data = batch_all[0]
+    else:
+        raw_data = batch_all
+
+    # 3. 搬移到 GPU 並計算
+    raw_data = raw_data.to(device)
+    global_jaccard_matrix = compute_geometry_jaccard_sim(raw_data)  
+
+    # start_epoch, best_test_acc = load_checkpoint(
+    #     ckpt_filename, 
+    #     model, 
+    #     optimizer, 
+    #     device
+    # )
     print('================')
     print('lr: {}'.format(lr))
     print('num_features: {}'.format(dataset_num_features))
@@ -426,8 +441,6 @@ if __name__ == '__main__':
     """
 
     for epoch in range(0, epochs + 1):
-        if args.mode == 'reweight_random_FN':
-            epoch_metrics = {'precision': 0.0, 'recall': 0.0, 'f1': 0.0}
         if args.mode == 'focal_infonce' or args.mode == 'PPR_infonce':
             epoch_metrics = {k: 0.0 for k in ['t_p', 't_r', 't_f1', 's_p', 's_r', 's_f1']}
         if args.mode == 'PPR_infonce_oracle':
@@ -437,7 +450,7 @@ if __name__ == '__main__':
 
     # for epoch in range(start_epoch, epochs + 1):
         # lr = scheduler.step()
-        if False:
+        if epoch % 5 == 0:
             model.eval()
             diag_dir = f'{save_dir}/Global_Diagnosis/E{epoch}'
             os.makedirs(diag_dir, exist_ok=True)
@@ -456,7 +469,7 @@ if __name__ == '__main__':
                 
                 # 計算診斷指標
                 sub_cos = torch.mm(emb_t[s_idx], emb_t[s_idx].t())
-                sub_jaccard = global_jaccard_matrix[s_idx][:, s_idx] if global_jaccard_matrix is not None else sub_cos
+                sub_jaccard = global_jaccard_matrix[s_idx][:, s_idx]
                 
                 # Causal 批次計算
                 sub_data_list = []
@@ -505,22 +518,18 @@ if __name__ == '__main__':
             x, _ = model(data.x, data.edge_index, data.batch)
 
             if args.aug == 'dnodes' or args.aug == 'subgraph' or args.aug == 'random2' or args.aug == 'random3' or args.aug == 'random4':
+                # node_num_aug, _ = data_aug.x.size()
                 edge_idx = data_aug.edge_index.numpy()
                 _, edge_num = edge_idx.shape
-                
-                # Optimized bottleneck using numpy
-                idx_not_missing = np.unique(edge_idx).tolist()
-                
+                idx_not_missing = [n for n in range(node_num) if (n in edge_idx[0] or n in edge_idx[1])]
+
                 node_num_aug = len(idx_not_missing)
                 data_aug.x = data_aug.x[idx_not_missing]
+
                 data_aug.batch = data.batch[idx_not_missing]
-                
-                idx_dict = np.zeros(node_num, dtype=np.int64)
-                idx_dict[idx_not_missing] = np.arange(node_num_aug)
-                
-                new_edge_idx = idx_dict[edge_idx]
-                mask = new_edge_idx[0] != new_edge_idx[1]
-                data_aug.edge_index = torch.from_numpy(new_edge_idx[:, mask])
+                idx_dict = {idx_not_missing[n]:n for n in range(node_num_aug)}
+                edge_idx = [[idx_dict[edge_idx[0, n]], idx_dict[edge_idx[1, n]]] for n in range(edge_num) if not edge_idx[0, n] == edge_idx[1, n]]
+                data_aug.edge_index = torch.tensor(edge_idx).transpose_(0, 1)
 
             data_aug = data_aug.to(device)
 
@@ -615,18 +624,6 @@ if __name__ == '__main__':
                 loss, _, stats = model.loss_cal_structural_focal_infonce(x, x_aug, labels)
                 for k in epoch_metrics:
                     epoch_metrics[k] += stats[k]
-            elif args.mode == 'reweight_random_FN':
-                loss, pos_sim, neg_sim, fn_metrics = unified_loss(
-                    x, x_aug, labels, 
-                    pos_strategy='normal', 
-                    neg_strategy='random_drop_fn', drop_p=0.5,
-                    sim_measure=args.similarity_measure
-                )
-                if 'precision' not in epoch_metrics:
-                    epoch_metrics.update({'precision': 0.0, 'recall': 0.0, 'f1': 0.0})
-                epoch_metrics['precision'] += fn_metrics.get('precision', 0)
-                epoch_metrics['recall'] += fn_metrics.get('recall', 0)
-                epoch_metrics['f1'] += fn_metrics.get('f1', 0)
             elif args.mode == 'MSE_infonce':
                 loss, _, stats = model.loss_cal_MSE_infonce(x, x_aug, labels, data)
                 for k in epoch_metrics:
@@ -667,9 +664,6 @@ if __name__ == '__main__':
             #     writer.add_scalar(f'Singular_Values/{epoch}_{args.DS}', np.log10(value), i)
             if acc_val > best_val_acc:
                 best_val_acc = acc_val
-                if args.mode == 'reweight_random_FN':
-                    num_batches = len(dataloader)
-                    best_fn_metrics = {k: v / num_batches for k, v in epoch_metrics.items()}
                 best_epoch = epoch
                 save_checkpoint(
                     epoch, 
@@ -691,9 +685,3 @@ if __name__ == '__main__':
         s3 = json.dumps(accuracies)
         f.write('{},{},{},{},{},{},{},{}\n'.format(args.DS, args.num_gc_layers, epochs, log_interval, lr, s1, s2, s3))
     
-    print(f'BEST_VAL_ACC={best_val_acc}')
-    if args.mode == 'reweight_random_FN':
-        try:
-            print(f'BEST_FN_METRICS={json.dumps(best_fn_metrics)}')
-        except:
-            pass

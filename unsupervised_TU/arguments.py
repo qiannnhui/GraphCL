@@ -32,7 +32,7 @@ def arg_parse():
 #     parser.add_argument('--path', type=str, default='/disk_195a/qiannnhui/data') # 195
 #     parser.add_argument('--path', type=str, default='/disk_248a/qiannnhui/data') # 248
     parser.add_argument('--path', type=str, default='/home/qiannnhui/data/data') # 249
-    parser.add_argument('--aug_ratio', dest='aug_ratio', type=int, default=1,
+    parser.add_argument('--aug_ratio', dest='aug_ratio', type=float, default=1,
             help='Dropout rate of data augmentation, will be multiplied by 0.1')
     parser.add_argument('--mode', type=str, default='normal', help='normal, rm_FN(rm False Negative), cheated(pos and neg), rm_FP')
     parser.add_argument('--odecay',type=float, default=1.0)  

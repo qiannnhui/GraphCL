@@ -141,7 +141,7 @@ def svc_classify(x, y, search):
         # x_train, x_val, y_train, y_val = train_test_split(x_train, y_train, test_size=0.1)
         if search:
             params = {'C':[0.001, 0.01,0.1,1,10,100,1000]}
-            classifier = GridSearchCV(SVC(), params, cv=5, scoring='accuracy', verbose=0)
+            classifier = GridSearchCV(SVC(), params, cv=5, scoring='accuracy', verbose=0, n_jobs=8)
         else:
             classifier = SVC(C=10)
         classifier.fit(x_train, y_train)
@@ -157,7 +157,7 @@ def svc_classify(x, y, search):
         # x_train, x_val, y_train, y_val = train_test_split(x_train, y_train, test_size=0.1)
         if search:
             params = {'C':[0.001, 0.01,0.1,1,10,100,1000]}
-            classifier = GridSearchCV(SVC(), params, cv=5, scoring='accuracy', verbose=0)
+            classifier = GridSearchCV(SVC(), params, cv=5, scoring='accuracy', verbose=0, n_jobs=8)
         else:
             classifier = SVC(C=10)
         classifier.fit(x_train, y_train)
